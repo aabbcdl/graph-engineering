@@ -1,0 +1,4 @@
+interface:
+  display_name: "Graph Incident Analysis"
+  short_description: "Find reproducible root causes and durable incident fixes"
+  default_prompt: "Use $graph-incident-analysis to trace an incident to a verified root cause and fix plan."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Graph Requirements & Design"
+  short_description: "Review requirements and design executable reversible features"
+  default_prompt: "Use $graph-requirements-design to review requirements and produce an executable feature design."

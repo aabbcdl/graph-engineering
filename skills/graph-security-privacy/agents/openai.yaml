@@ -1,0 +1,4 @@
+interface:
+  display_name: "Graph Security & Privacy"
+  short_description: "Review exploitable security privacy and data-flow risks"
+  default_prompt: "Use $graph-security-privacy to review security, privacy, and data-flow risks."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Graph Engineering Quality"
+  short_description: "Review and repair engineering correctness and architecture"
+  default_prompt: "Use $graph-engineering-quality to review engineering risks and implement verified fixes."

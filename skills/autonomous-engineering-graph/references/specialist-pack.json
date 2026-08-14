@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "source": "KopiAI docs/review-prompts",
+  "shared_references": [
+    {
+      "target": "references/lifecycle-map.md",
+      "source": "docs/review-prompts/生命周期扩展/README.md",
+      "sha256": "f24587bd6f0fd99ed83bb854e5719cab3e5135dcee67b21de0320b1c7efec836"
+    },
+    {
+      "target": "references/lifecycle-contract.md",
+      "source": "docs/review-prompts/生命周期扩展/统一工作流契约.md",
+      "sha256": "6bf65123ef2b739451909ec08d5b5056a4cbba006ad345d317f44871a02d9abf"
+    },
+    {
+      "target": "references/lifecycle-controller.md",
+      "source": "docs/review-prompts/生命周期扩展/工作流控制器.md",
+      "sha256": "6a0587b063ae9af5678044628c64cda0c70aee5bd4c4d33b396b67cdc7185dd9"
+    }
+  ],
+  "skills": [
+    {
+      "name": "graph-engineering-quality",
+      "node_kinds": ["review", "implementation", "correction", "verification", "independent_review"],
+      "references": [
+        {
+          "target": "references/review-rubric.md",
+          "source": "docs/review-prompts/Code_Review_Ultimate审查.md",
+          "sha256": "58e526bbf9f579e3c9fd97d6b9fda4cd2e60efea96a1343c0f05d5bab3690780"
+        },
+        {
+          "target": "references/execution-rubric.md",
+          "source": "docs/review-prompts/Code_Review_Execution_Ultimate修复.md",
+          "sha256": "c20fe78672d80512aecac4b275e342880df0921efc68dffe6408f4e1cf184064"
+        }
+      ]
+    },
+    {
+      "name": "graph-product-quality",
+      "node_kinds": ["review", "implementation", "correction", "independent_review"],
+      "references": [
+        {
+          "target": "references/review-rubric.md",
+          "source": "docs/review-prompts/Product_Review_Ultimate审查.md",
+          "sha256": "c9dfbf756992143c18541d7ae188caac83564f75c15b7888fb49f51ee7fdc05d"
+        },
+        {
+          "target": "references/execution-rubric.md",
+          "source": "docs/review-prompts/Product_Improvement_Execution_Ultimate修复.md",
+          "sha256": "fce6ce2899e9997476b87b07c17d624acfe1ba4300e69e56bb0b518fac31cf9b"
+        }
+      ]
+    },
+    {
+      "name": "graph-experience-quality",
+      "node_kinds": ["review", "implementation", "correction", "verification", "independent_review"],
+      "references": [
+        {
+          "target": "references/review-rubric.md",
+          "source": "docs/review-prompts/UX_UI_Review_Ultimate-审查.md",
+          "sha256": "a1dde1b183affcdd0060117a0c0a05d9f6ec22b01a20214b4a8fb2c69b2e329c"
+        },
+        {
+          "target": "references/execution-rubric.md",
+          "source": "docs/review-prompts/UX_UI_Improvement_Execution_Ultimate-修复.md",
+          "sha256": "636f8fcfea15b575b2c6c3560ac98609d7649a13e72a694dbda6dd33d80a14a2"
+        }
+      ]
+    },
+    {
+      "name": "graph-requirements-design",
+      "node_kinds": ["discovery", "review"],
+      "references": [
+        {
+          "target": "references/requirements-review.md",
+          "source": "docs/review-prompts/生命周期扩展/需求评审.md",
+          "sha256": "ce8573b8ede650acee3e36f68c889f0b82f59a7c70b58ddbecadeafb5dd94655"
+        },
+        {
+          "target": "references/feature-design.md",
+          "source": "docs/review-prompts/生命周期扩展/新功能技术方案设计.md",
+          "sha256": "635963ef9147fbcd5a5f41cb1e1995fd4eb22d157a9bfacf58711169c5bd6bdd"
+        }
+      ]
+    },
+    {
+      "name": "graph-security-privacy",
+      "node_kinds": ["review", "implementation", "correction", "verification", "independent_review"],
+      "references": [
+        {
+          "target": "references/review-rubric.md",
+          "source": "docs/review-prompts/生命周期扩展/安全与隐私审查.md",
+          "sha256": "119c9b71a17a133ef86b312ed410b0417e2bd3c510b52663437f4cac6f4ea194"
+        }
+      ]
+    },
+    {
+      "name": "graph-incident-analysis",
+      "node_kinds": ["discovery", "review"],
+      "references": [
+        {
+          "target": "references/root-cause-rubric.md",
+          "source": "docs/review-prompts/生命周期扩展/线上问题根因分析.md",
+          "sha256": "ca8e1c4de67d7effe258ee785ac50a1c6036eee9ceb6292024ec0cccdbc2ca28"
+        }
+      ]
+    },
+    {
+      "name": "graph-release-assurance",
+      "node_kinds": ["verification", "independent_review"],
+      "references": [
+        {
+          "target": "references/final-audit.md",
+          "source": "docs/review-prompts/生命周期扩展/最终质量审计.md",
+          "sha256": "1ea46407a3e9bdc9e1ac63c20f85c6b228d5317e9e11df680bcbed65e8a1786d"
+        },
+        {
+          "target": "references/release-gate.md",
+          "source": "docs/review-prompts/生命周期扩展/发布就绪关口.md",
+          "sha256": "5f17122eeb1f29d1d1515991918b0fb9f17e04e723b07fc466b74b4ce7066c83"
+        }
+      ]
+    }
+  ]
+}

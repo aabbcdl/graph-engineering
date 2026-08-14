@@ -1,0 +1,4 @@
+interface:
+  display_name: "Graph Release Assurance"
+  short_description: "Audit completed work and assess release readiness"
+  default_prompt: "Use $graph-release-assurance to audit completed work and assess release readiness."

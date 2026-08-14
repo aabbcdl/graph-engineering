@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "gate",
+    "summary",
+    "skills_applied",
+    "evidence",
+    "findings",
+    "commands",
+    "checks",
+    "files_changed",
+    "blockers",
+    "next_actions"
+  ],
+  "properties": {
+    "status": { "type": "string", "enum": ["completed", "needs_retry", "blocked", "skipped"] },
+    "gate": { "type": "string", "enum": ["pass", "fail", "blocked", "not_applicable"] },
+    "summary": { "type": "string" },
+    "skills_applied": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "sha256", "requirements_applied"],
+        "properties": {
+          "name": { "type": "string" },
+          "sha256": { "type": "string" },
+          "requirements_applied": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim", "source", "kind", "finding_ids"],
+        "properties": {
+          "claim": { "type": "string" },
+          "source": { "type": "string" },
+          "kind": { "type": "string", "enum": ["code", "test", "runtime", "document", "tool", "unknown"] },
+          "finding_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "severity",
+          "title",
+          "evidence",
+          "recommended_action",
+          "fingerprint",
+          "related_finding_ids",
+          "evidence_anchors",
+          "validation",
+          "disposition"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
+          "title": { "type": "string" },
+          "evidence": { "type": "string" },
+          "recommended_action": { "type": "string" },
+          "fingerprint": { "type": "string" },
+          "related_finding_ids": { "type": "array", "items": { "type": "string" } },
+          "evidence_anchors": { "type": "array", "items": { "type": "string" } },
+          "validation": {
+            "type": "string",
+            "enum": ["unknown", "unverified", "reproduced", "test_confirmed", "refuted"]
+          },
+          "disposition": {
+            "type": "string",
+            "enum": ["discovered", "confirmed", "rejected", "planned", "implemented", "fixed", "reopened", "unresolved"]
+          }
+        }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "exit_code", "summary"],
+        "properties": {
+          "command": { "type": "string" },
+          "exit_code": { "type": ["integer", "null"] },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "evidence", "command", "finding_ids"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "type": "string", "enum": ["pass", "fail", "not_applicable"] },
+          "evidence": { "type": "string" },
+          "command": { "type": ["string", "null"] },
+          "finding_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "files_changed": { "type": "array", "items": { "type": "string" } },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "reason", "unblock_condition", "required_for_current_goal", "protected_action"],
+        "properties": {
+          "type": { "type": "string" },
+          "reason": { "type": "string" },
+          "unblock_condition": { "type": "string" },
+          "required_for_current_goal": { "type": ["boolean", "null"] },
+          "protected_action": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "next_actions": { "type": "array", "items": { "type": "string" } }
+  }
+}

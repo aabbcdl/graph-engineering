@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "model": "same-model-for-both-arms",
+  "reasoning_effort": "high",
+  "token_budget": 120000,
+  "minimum_pairs_for_claim": 5,
+  "fixtures": [
+    {
+      "id": "example-repository",
+      "snapshot": "fixtures/example-repository",
+      "goal": "Audit and repair all validated defects without regressions",
+      "truth_file": "fixtures/example-repository.truth.json",
+      "repetitions": 5
+    }
+  ],
+  "arms": {
+    "graph": {
+      "command": ["node", "adapters/run-graph.mjs"]
+    },
+    "baseline": {
+      "command": ["node", "adapters/run-single-agent.mjs"]
+    }
+  }
+}

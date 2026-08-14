@@ -1,0 +1,4 @@
+interface:
+  display_name: "Graph Experience Quality"
+  short_description: "Review UX accessibility and implement visually verified fixes"
+  default_prompt: "Use $graph-experience-quality to review the experience and implement verified UX fixes."

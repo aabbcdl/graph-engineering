@@ -1,0 +1,7 @@
+interface:
+  display_name: "Graph Engineering"
+  short_description: "Run user-approved engineering graphs"
+  default_prompt: "Use $autonomous-engineering-graph for this explicitly approved Graph task, then inspect, implement, verify, and report it autonomously."
+
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Graph Product Quality"
+  short_description: "Review product value and implement evidence-backed improvements"
+  default_prompt: "Use $graph-product-quality to review product quality and implement justified improvements."

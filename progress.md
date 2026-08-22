@@ -32,6 +32,14 @@
 - Added seven CLI contract tests for the operations that previously had no coverage: `preview` (read-only, no state residue, v3 shape), `runs` (listing, recoverable flags, usage, workspace filter), `diff` (added/modified/deleted/mode-only classification), `apply --dry-run` (eligibility and conflict checks without writes), `apply --file` (selective application, `partial_application` recording, `RunPartiallyApplied` event), `recheck` guard rails (scope, completion, review, metadata, drift), and the `recheck` `already-satisfied` fast path with zero model calls.
 - Synced `task_plan.md`, `findings.md`, and this file to the verified final state.
 
+### Evaluation trustworthiness and token analysis
+
+- **Status:** completed (`35b9644`); see the harness binding, rejection classes, and cost-efficiency metrics sections in `evals/README.md`.
+- Verified the owner's four corrections: the August pilots are Run v2 records (not current v3), each budget tier is its own 1/5 experiment with `claim_ready=false`, booking-ledger holds 6 truth defects in 55 source lines, and `92e3b59` spans 63 files (+18,659/-3,721).
+- Rescoring an old pilot with the new scorer rejects its unbound pairs as `infrastructure` with the descriptive-history conclusion, as designed.
+- Added `evals/scripts/analyze-run-tokens.mjs` and `docs/eval-token-analysis.md`: per-node/per-stage token breakdowns of both completed v2 pilots. Headline: output is 2-3% of cost; the clean run spends 38.7% in five review nodes and the corrected run spends 48% in the correction loop's full re-verification/re-review rounds; supervision nodes have zero cache hits.
+- Drafted `docs/fixture-jobqueue-design.md`: a Go fixture-2 proposal (7 modules, ~2,700 lines, 20+ cross-module defects with category quotas frozen before any arm observation).
+
 ## Baseline failure classification (resolved)
 
 - `a required command counts when it runs inside an exit-code-capturing wrapper`: resolved under the approved strict contract (extra wrapper commands are rejected).

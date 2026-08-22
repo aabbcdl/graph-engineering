@@ -38,6 +38,7 @@
     "evals/README.md",
     "evals/run-paired.mjs",
     "evals/score.mjs",
+    "evals/scripts",
     "scripts/install.mjs",
     "scripts/package-smoke.mjs",
     "scripts/validate-package.mjs",

@@ -2263,6 +2263,54 @@ async function measureWorkspaceScale(workspace) {
   return { files, bytes, truncated };
 }
 
+const WORKSPACE_MAP_ENTRY_LIMIT = 200;
+const WORKSPACE_MAP_BYTES_LIMIT = 12_288;
+
+// A bounded file listing injected into discovery and review prompts. Agents
+// on small repositories otherwise spend their tool-loop budget rediscovering
+// the same handful of paths; the map front-loads orientation without
+// replacing the agent's own evidence gathering.
+async function workspaceFileMap(workspace) {
+  const entries = [];
+  let truncated = false;
+  const stack = [{ directory: path.resolve(workspace), relative: "" }];
+  while (stack.length) {
+    const { directory, relative } = stack.pop();
+    let children = [];
+    try {
+      children = await readdir(directory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const child of children.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (child.name.startsWith(".git") || REVIEW_SCALE_SKIP_DIRECTORIES.has(child.name)) continue;
+      const childRelative = relative ? `${relative}/${child.name}` : child.name;
+      const target = path.join(directory, child.name);
+      if (child.isDirectory()) {
+        stack.push({ directory: target, relative: childRelative });
+        continue;
+      }
+      if (!child.isFile()) continue;
+      let size = null;
+      try {
+        size = (await lstat(target)).size;
+      } catch {}
+      entries.push(`${childRelative} (${size === null ? "size unknown" : `${size} bytes`})`);
+      if (entries.length >= WORKSPACE_MAP_ENTRY_LIMIT) {
+        truncated = true;
+        break;
+      }
+    }
+    if (truncated) break;
+  }
+  let text = entries.join("\n");
+  if (text.length > WORKSPACE_MAP_BYTES_LIMIT) {
+    text = text.slice(0, WORKSPACE_MAP_BYTES_LIMIT);
+    truncated = true;
+  }
+  return { files: text, count: entries.length, truncated };
+}
+
 // Auto review-limit scaling: a tiny workspace cannot feed five parallel
 // domain reviews without each node re-reading the same handful of files.
 // The per-wave cap shrinks only when the owner did not pin limits
@@ -5494,6 +5542,37 @@ function compactResultForDependency(dependency, result, node, run, compactionLev
       compaction: compacted.compaction,
     };
   }
+  if (node.kind === "independent_review") {
+    // A fresh-context reviewer must re-derive evidence from the workspace
+    // itself. Upstream self-reported prose and raw command transcripts only
+    // add tokens and anchor the reviewer to claims it is told not to trust.
+    // Keep finding identities for lineage preservation, machine check
+    // outcomes, and the changed-file list as the factual summary.
+    const reviewBlockers = compactBlockers(result.blockers, { limit: limits.blockers });
+    return {
+      status: result.status,
+      gate: result.gate,
+      summary: compacted.summary,
+      findings: compacted.findings.map((finding) => ({
+        id: finding.id,
+        fingerprint: finding.fingerprint,
+        severity: finding.severity,
+        title: finding.title,
+        disposition: finding.disposition,
+        validation: finding.validation,
+        related_finding_ids: finding.related_finding_ids,
+      })),
+      blockers: reviewBlockers.blocking,
+      deferred_protected_actions: reviewBlockers.deferred,
+      files_changed: compacted.files_changed,
+      checks: compacted.checks,
+      machine_check_evaluation: Array.isArray(result.machine_check_evaluation?.checks)
+        ? result.machine_check_evaluation.checks.map((check) => ({ id: check.id, status: check.status }))
+        : undefined,
+      upstream_scope_note: "Self-reported evidence prose and command transcripts are intentionally omitted for this fresh-context reviewer; re-derive them from the current workspace and its diff.",
+      compaction: compacted.compaction,
+    };
+  }
   const blockers = compactBlockers(result.blockers, { limit: limits.blockers });
   return {
     status: result.status,
@@ -5505,7 +5584,7 @@ function compactResultForDependency(dependency, result, node, run, compactionLev
     deferred_protected_actions: blockers.deferred,
     next_actions: compacted.next_actions,
     files_changed: compacted.files_changed,
-    checks: ["verification", "independent_review", "correction"].includes(node.kind) ? compacted.checks : undefined,
+    checks: ["verification", "correction"].includes(node.kind) ? compacted.checks : undefined,
     compaction: compacted.compaction,
   };
 }
@@ -5748,6 +5827,9 @@ async function buildNodePrompt({ node, run, runDir, catalog, compactionLevel = "
         .join("\n\n")
     : "No additional skill was selected for this node; project instructions still apply.";
   const upstream = await dependencyContext(node, runDir, run, compactionLevel);
+  const fileMap = ["discovery", "review"].includes(node.kind)
+    ? await workspaceFileMap(run.execution_workspace || run.workspace)
+    : null;
   const authorizations = JSON.stringify(run.authorizations || [], null, 2);
   const checksHeading = Array.isArray(node.incremental_check_ids) && node.incremental_check_ids.length
     ? "Required checks for this incremental verification round only (checks that passed with recorded host evidence in an earlier round stay satisfied unless changed surfaces require a fresh run)"
@@ -5765,7 +5847,10 @@ ${run.goal}
 
 Node title: ${node.title}
 Node focus: ${node.focus}
-Completion criteria:
+${fileMap ? `Workspace file map (bounded listing for orientation; gather your own evidence and explore beyond it when required):
+${fileMap.files}${fileMap.truncated ? "\n(file map truncated)" : ""}
+
+` : ""}Completion criteria:
 ${run.plan.completion_criteria.map((item) => `- ${item}`).join("\n")}
 
 ${checksHeading}:
@@ -12201,6 +12286,8 @@ export {
   effectiveReviewLimits,
   makeLoopNode,
   unsatisfiedCheckIds,
+  workspaceFileMap,
+  compactResultForDependency,
   dependencyContext,
   nodeSandboxMode,
   nodeInputBudget,

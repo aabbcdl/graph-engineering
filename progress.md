@@ -48,6 +48,14 @@
 - Lever 4 (supervision cache prefix) was analyzed and deliberately deferred: the zero cache hits come from supervision being single-turn no-tool nodes, which cannot produce multi-turn prefix reuse; reordering the prompt would be unverified speculation.
 - Tests: extended the correction-resume test with incremental-round input assertions and the merged evaluation; added unit tests for `effectiveReviewLimits` (small/large/explicit/audit floor), `makeLoopNode`/`unsatisfiedCheckIds` scoping, and a full fake-Codex run asserting `coverage.auto_review_scaling` and the ≤2 review fan-out on a small workspace.
 
+### Token optimization levers 3 and review input packing
+
+- **Status:** implemented.
+- Measured the v2 independent-review-r0 input composition (115KB: skills ~62KB, upstream verification result ~48.5KB, header ~4.6KB) before changing anything.
+- Reviewer dependency slimming: `compactResultForDependency` now returns a machine-facts-first shape for `independent_review` consumers (finding identities for lineage, checks, changed files, and the runner-computed `machine_check_evaluation` statuses) and drops self-reported evidence prose, recommended actions, evidence anchors, and command transcripts; an `upstream_scope_note` tells the reviewer to re-derive evidence from the workspace. Other node kinds keep the previous compaction.
+- Workspace file map: `workspaceFileMap` (bounded: 200 entries / 12KiB, skips .git/node_modules/build dirs) is injected into discovery and review prompts to front-load orientation and cut tool-loop re-listing.
+- Tests: unit coverage for both (reviewer context shape vs unchanged correction context; map bounds and directory skipping).
+
 ## Baseline failure classification (resolved)
 
 - `a required command counts when it runs inside an exit-code-capturing wrapper`: resolved under the approved strict contract (extra wrapper commands are rejected).

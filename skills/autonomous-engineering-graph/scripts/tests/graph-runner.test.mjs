@@ -25,6 +25,7 @@ import {
   claudeLastMessageFromEvents,
   recordClaudeSandboxProbe,
   commandExecutables,
+  compactResultForDependency,
   compileGraph,
   classifyEnvironmentGap,
   createFrozenWorkspace,
@@ -86,6 +87,7 @@ import {
   shouldRetrySupervisionRecheck,
   transientExecutionFailure,
   unsatisfiedCheckIds,
+  workspaceFileMap,
   waitForBackgroundHandoff,
   WATCH_TERMINAL_STATUSES,
   workspaceBucket,
@@ -9688,4 +9690,81 @@ test("a small-workspace run records auto review scaling without shrinking covera
   assert.equal(run.plan.coverage.auto_review_scaling.workspace_files > 0, true);
   const reviewNodes = run.node_order.filter((id) => id.startsWith("review-"));
   assert.ok(reviewNodes.length >= 1 && reviewNodes.length <= 2, `unexpected review fan-out: ${reviewNodes.join(", ")}`);
+});
+
+test("independent review dependencies carry machine facts without self-reported prose", () => {
+  const verificationResult = {
+    status: "completed",
+    gate: "pass",
+    summary: "all checks passed",
+    evidence: [{ claim: "agent claims success".repeat(20), source: "fake-check", kind: "tool" }],
+    findings: [{
+      id: "FIND-1",
+      severity: "high",
+      title: "edge case defect",
+      evidence: "long self-reported evidence prose ".repeat(30),
+      recommended_action: "long recommended action ".repeat(20),
+      fingerprint: "fp-find-1",
+      related_finding_ids: [],
+      validation: "reproduced",
+      disposition: "fixed",
+    }],
+    blockers: [],
+    files_changed: ["src/one.mjs", "src/two.mjs"],
+    checks: [{ id: "fixture-verification", status: "pass", command: "fake-check verification", finding_ids: [] }],
+    machine_check_evaluation: { checks: [{ id: "fixture-verification", status: "pass" }] },
+  };
+
+  const reviewerContext = compactResultForDependency(
+    "verification-r1",
+    verificationResult,
+    { kind: "independent_review" },
+    {},
+  );
+  assert.equal(reviewerContext.findings.length, 1);
+  assert.equal(reviewerContext.findings[0].fingerprint, "fp-find-1");
+  assert.equal(reviewerContext.findings[0].disposition, "fixed");
+  assert.equal(reviewerContext.findings[0].evidence, undefined);
+  assert.equal(reviewerContext.evidence, undefined);
+  assert.deepEqual(reviewerContext.machine_check_evaluation, [{ id: "fixture-verification", status: "pass" }]);
+  assert.deepEqual(reviewerContext.files_changed, ["src/one.mjs", "src/two.mjs"]);
+  assert.match(reviewerContext.upstream_scope_note, /fresh-context reviewer/);
+
+  const correctionContext = compactResultForDependency(
+    "verification-r1",
+    verificationResult,
+    { kind: "correction" },
+    {},
+  );
+  assert.ok(correctionContext.findings[0].evidence.includes("self-reported evidence prose"));
+  assert.equal(correctionContext.evidence.length, 1);
+  assert.equal(correctionContext.machine_check_evaluation, undefined);
+});
+
+test("the workspace file map is bounded and skips generated directories", async (t) => {
+  const root = await temporaryDirectory(t);
+  await mkdir(path.join(root, "src", "nested"), { recursive: true });
+  await mkdir(path.join(root, "node_modules", "dep"), { recursive: true });
+  await mkdir(path.join(root, ".git", "objects"), { recursive: true });
+  await writeFile(path.join(root, "src", "app.mjs"), "export const app = 1;\n", "utf8");
+  await writeFile(path.join(root, "src", "nested", "util.mjs"), "export const util = 1;\n", "utf8");
+  await writeFile(path.join(root, "node_modules", "dep", "index.js"), "ignored\n", "utf8");
+  await writeFile(path.join(root, ".git", "objects", "pack.dat"), "ignored\n", "utf8");
+
+  const map = await workspaceFileMap(root);
+  assert.equal(map.truncated, false);
+  assert.ok(map.files.includes("src/app.mjs"));
+  assert.ok(map.files.includes("src/nested/util.mjs"));
+  assert.ok(!map.files.includes("node_modules"));
+  assert.ok(!map.files.includes(".git"));
+  assert.equal(map.count, 2);
+
+  const capped = path.join(root, "capped");
+  await mkdir(capped, { recursive: true });
+  for (let index = 0; index < 250; index += 1) {
+    await writeFile(path.join(capped, `file-${index}.txt`), "x\n", "utf8");
+  }
+  const truncatedMap = await workspaceFileMap(capped);
+  assert.equal(truncatedMap.truncated, true);
+  assert.equal(truncatedMap.count, 200);
 });

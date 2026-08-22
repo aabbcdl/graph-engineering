@@ -75,10 +75,18 @@ planner 在审查域选择上有自由度。
    /`--max-total-review-nodes` 时收缩；audit 模式的下限是四个必需域
    （engineering/product/experience/security），task 模式下限 2；决策与测量值记录在
    `coverage.auto_review_scaling` 并随 run 持久化，resume 与旧 run 不受影响。
-   输入打包（discovery 结果直接嵌入审查 prompt）尚未实现，留待下一批。
-3. **[未实现] 独立复核输入瘦身**。independent-review 的 input.md 是全量 transcript
-   （123KB）。复核需要独立的仓库访问权，但不需要冗长历史：输入只给变更清单 + diff，
-   让它自己在冻结仓库里验证。预计每轮 300K → ~150K；四轮制下最多省 ~600K。
+   输入打包已实现文件地图部分：`workspaceFileMap` 为 discovery 与 review 节点
+   注入有界的仓库文件清单（跳过 .git/node_modules 等生成目录，200 条/12KiB 封顶），
+   前置定位信息以减少工循环中的重复翻找；更深的 discovery 结果嵌入留待实测验证。
+3. **[已实现] 独立复核输入瘦身**。实测 independent-review-r0 的 115KB 输入构成：
+   skill 全文约 62KB（54%）、上游 verification 结果约 48.5KB（42%）、头部样板约 4.6KB。
+   实现方式：`compactResultForDependency` 为 independent_review 节点改用
+   「机器事实优先」形态——保留 findings 身份（id/fingerprint/title/disposition/
+   related_finding_ids，供 lineage 保持）、checks、files_changed 与 runner 计算的
+   `machine_check_evaluation` 逐项状态，丢弃自述 evidence 长文、recommended_action、
+   evidence_anchors 与命令转录，并附注要求复核者自行在仓库中重推证据。这与
+   「fresh-context reviewer 不得信任自报成功」的角色约束一致；其它节点类型的
+   依赖压实不变。预计每轮 300K → ~150K；四轮制下最多省 ~600K。
 4. **[已评估，暂缓] supervision 节点的缓存前缀修复**。planner-supervision 与
    implementation-supervision 的 cached_input_tokens 为 0。分析后确认这不是前缀
    排列问题：缓存命中主要来自同一节点内多轮工循环的会话前缀复用，而 supervision

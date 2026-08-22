@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { access, cp, lstat, mkdir, open, readFile, readdir, readlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { RUN_VERSION } from "../../skills/autonomous-engineering-graph/scripts/graph-runner.mjs";
+
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -205,17 +210,39 @@ async function prepareFrozenFixture({ fixture, manifestDirectory, outputDirector
   return { target, sha256: frozenHash };
 }
 
+async function sha256File(target) {
+  return createHash("sha256").update(await readFile(target)).digest("hex");
+}
+
+async function harnessIdentity() {
+  const runnerPath = path.join(PROJECT_ROOT, "skills", "autonomous-engineering-graph", "scripts", "graph-runner.mjs");
+  const revision = spawnSync("git", ["rev-parse", "HEAD"], { cwd: PROJECT_ROOT, encoding: "utf8" });
+  return {
+    revision: revision.status === 0 ? revision.stdout.trim() : null,
+    runner_sha256: await sha256File(runnerPath),
+    runtime_sha256: await hashTree(path.join(PROJECT_ROOT, "skills", "autonomous-engineering-graph", "scripts", "runtime")),
+    evals_lib_sha256: await hashTree(path.join(PROJECT_ROOT, "evals", "lib")),
+    adapters_sha256: await hashTree(path.join(PROJECT_ROOT, "evals", "adapters")),
+    graph_run_version_expected: RUN_VERSION,
+    environment: { node: process.version, platform: process.platform, arch: process.arch },
+  };
+}
+
 async function runPairedEvaluation({ manifestPath, outputDirectory }) {
   const resolvedManifest = path.resolve(manifestPath);
   const manifestDirectory = path.dirname(resolvedManifest);
-  const manifest = JSON.parse(await readFile(resolvedManifest, "utf8"));
+  const manifestContent = await readFile(resolvedManifest, "utf8");
+  const manifest = JSON.parse(manifestContent);
   validateManifest(manifest);
+  const harness = await harnessIdentity();
   const resolvedOutput = path.resolve(outputDirectory);
   if (await exists(resolvedOutput)) throw new Error(`Output directory already exists: ${resolvedOutput}`);
   await mkdir(resolvedOutput, { recursive: true });
   const results = {
     version: 1,
     manifest: resolvedManifest,
+    manifest_sha256: createHash("sha256").update(manifestContent).digest("hex"),
+    harness,
     generated_at: new Date().toISOString(),
     minimum_pairs_for_claim: manifest.minimum_pairs_for_claim || 5,
     fixtures: [],

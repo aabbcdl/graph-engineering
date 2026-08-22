@@ -1,13 +1,19 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { spawnCodex } from "../../skills/autonomous-engineering-graph/scripts/graph-runner.mjs";
 import { evaluationArguments, finishEvaluation, readGoal } from "./common.mjs";
 
 const args = evaluationArguments();
 const goal = await readGoal(args);
+const projectRoot = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+const runnerSha256 = createHash("sha256")
+  .update(await readFile(path.join(projectRoot, "skills", "autonomous-engineering-graph", "scripts", "graph-runner.mjs")))
+  .digest("hex");
 const nodeDir = path.join(path.dirname(args.output), "baseline-agent");
 const schema = path.join(nodeDir, "result.schema.json");
 await mkdir(nodeDir, { recursive: true });
@@ -87,6 +93,7 @@ await finishEvaluation({
   queueMs: execution?.queue_ms || 0,
   rawFindings: structured.findings || [],
   completedGates: execution?.exit_code === 0 && structured.completed_gates === true,
+  identity: { runner_sha256: runnerSha256, arm_contract: "codex-single-agent" },
   artifacts: {
     proof: execution?.proof_path || null,
     events: execution?.events_path || null,

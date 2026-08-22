@@ -25,7 +25,19 @@ function wilsonInterval(successes, total, z = 1.96) {
   return { low: Math.max(0, center - margin), high: Math.min(1, center + margin) };
 }
 
-function comparabilityErrors(pair) {
+// A rejected pair is a negative result when every error describes what the
+// measured system actually did (unfinished run, budget overrun). Any error
+// about the measurement itself (adapter contract, identity, unknown usage,
+// declaration mismatch) makes the sample infrastructure-invalid instead.
+const NEGATIVE_RESULT_PATTERNS = [/did not complete/, /exceeded token budget/];
+
+function classifyRejection(errors) {
+  if (!errors.length) return null;
+  const infrastructure = errors.some((error) => !NEGATIVE_RESULT_PATTERNS.some((pattern) => pattern.test(error)));
+  return infrastructure ? "infrastructure" : "negative_result";
+}
+
+function comparabilityErrors(pair, harness = null) {
   const errors = [];
   const left = pair.graph;
   const right = pair.baseline;
@@ -46,6 +58,21 @@ function comparabilityErrors(pair) {
     if (used === null) errors.push(`${name} token usage is unknown`);
     else if (Number.isFinite(arm.token_budget) && used > arm.token_budget) {
       errors.push(`${name} exceeded token budget: ${used}/${arm.token_budget}`);
+    }
+    if (!arm?.harness_identity?.runner_sha256) errors.push(`${name} adapter runner identity is missing`);
+  }
+  const graphIdentity = left?.harness_identity;
+  const baselineIdentity = right?.harness_identity;
+  if (graphIdentity?.runner_sha256 && baselineIdentity?.runner_sha256 && graphIdentity.runner_sha256 !== baselineIdentity.runner_sha256) {
+    errors.push(
+      `runner identity differs between arms: graph=${graphIdentity.runner_sha256} baseline=${baselineIdentity.runner_sha256}`,
+    );
+  }
+  const expectedRunVersion = Number.isInteger(harness?.graph_run_version_expected) ? harness.graph_run_version_expected : null;
+  if (expectedRunVersion !== null) {
+    if (!Number.isInteger(graphIdentity?.run_version)) errors.push("graph adapter did not report its Run schema version");
+    else if (graphIdentity.run_version !== expectedRunVersion) {
+      errors.push(`graph Run schema version ${graphIdentity.run_version} differs from harness expectation ${expectedRunVersion}`);
     }
   }
   return errors;
@@ -69,6 +96,8 @@ function armMetrics(arm, truth) {
   );
   const regressionFailures = (arm.regression_checks || []).filter((check) => check.status !== "pass").length;
   const expected = knownDefects.size;
+  const tokens = usageTotal(arm.usage);
+  const perMillionTokens = (count) => (tokens !== null && tokens > 0 ? (count * 1_000_000) / tokens : null);
   return {
     expected_defects: expected,
     validated_defects: detected.size,
@@ -81,17 +110,21 @@ function armMetrics(arm, truth) {
     completed_gates: arm.completed_gates === true,
     wall_ms: finite(arm.wall_ms),
     queue_ms: finite(arm.queue_ms),
-    tokens: usageTotal(arm.usage),
+    tokens,
+    validated_defects_per_mtok: perMillionTokens(detected.size),
+    verified_repairs_per_mtok: perMillionTokens(fixed.size),
+    tokens_per_validated_defect: tokens !== null && detected.size > 0 ? tokens / detected.size : null,
   };
 }
 
-function scorePair(pair, truth) {
-  const errors = comparabilityErrors(pair);
+function scorePair(pair, truth, harness = null) {
+  const errors = comparabilityErrors(pair, harness);
   return {
     fixture_id: pair.fixture_id,
     repetition: pair.repetition,
     comparable: errors.length === 0,
     comparability_errors: errors,
+    rejection_class: classifyRejection(errors),
     graph: armMetrics(pair.graph || {}, truth),
     baseline: armMetrics(pair.baseline || {}, truth),
   };
@@ -156,9 +189,13 @@ function pairedMeanInterval(values, confidence = 0.95) {
   return { low: mean - margin, high: mean + margin };
 }
 
-function aggregatePairs(scoredPairs, minimumPairs = 5) {
+function aggregatePairs(scoredPairs, minimumPairs = 5, harness = null) {
   const comparable = scoredPairs.filter((pair) => pair.comparable);
-  const incomplete = scoredPairs.length - comparable.length;
+  const rejected = scoredPairs.filter((pair) => !pair.comparable);
+  const rejectedInfrastructure = rejected.filter((pair) => pair.rejection_class === "infrastructure").length;
+  const rejectedNegative = rejected.filter((pair) => pair.rejection_class === "negative_result").length;
+  const incomplete = rejected.length;
+  const harnessBound = Boolean(harness?.runner_sha256);
   const summarize = (arm) => ({
     samples: comparable.length,
     validated_recall: average(comparable.map((pair) => pair[arm].validated_recall)),
@@ -170,10 +207,13 @@ function aggregatePairs(scoredPairs, minimumPairs = 5) {
     wall_ms: average(comparable.map((pair) => pair[arm].wall_ms)),
     queue_ms: average(comparable.map((pair) => pair[arm].queue_ms)),
     tokens: average(comparable.map((pair) => pair[arm].tokens)),
+    validated_defects_per_mtok: average(comparable.map((pair) => pair[arm].validated_defects_per_mtok)),
+    verified_repairs_per_mtok: average(comparable.map((pair) => pair[arm].verified_repairs_per_mtok)),
+    tokens_per_validated_defect: average(comparable.map((pair) => pair[arm].tokens_per_validated_defect)),
   });
   const graph = summarize("graph");
   const baseline = summarize("baseline");
-  const claimReady = comparable.length >= minimumPairs && incomplete === 0;
+  const claimReady = comparable.length >= minimumPairs && incomplete === 0 && harnessBound;
   const pairedDeltas = {
     validated_recall: comparable.map((pair) => pair.graph.validated_recall - pair.baseline.validated_recall),
     precision: comparable.map((pair) => pair.graph.precision - pair.baseline.precision),
@@ -182,6 +222,9 @@ function aggregatePairs(scoredPairs, minimumPairs = 5) {
     regression_failures: comparable.map((pair) => pair.graph.regression_failures - pair.baseline.regression_failures),
     wall_ms: comparable.map((pair) => pair.graph.wall_ms - pair.baseline.wall_ms),
     tokens: comparable.map((pair) => pair.graph.tokens - pair.baseline.tokens),
+    validated_defects_per_mtok: comparable.map((pair) => pair.graph.validated_defects_per_mtok - pair.baseline.validated_defects_per_mtok),
+    verified_repairs_per_mtok: comparable.map((pair) => pair.graph.verified_repairs_per_mtok - pair.baseline.verified_repairs_per_mtok),
+    tokens_per_validated_defect: comparable.map((pair) => pair.graph.tokens_per_validated_defect - pair.baseline.tokens_per_validated_defect),
   };
   const deltaIntervals = Object.fromEntries(
     Object.entries(pairedDeltas).map(([metric, values]) => [metric, pairedMeanInterval(values)]),
@@ -193,11 +236,14 @@ function aggregatePairs(scoredPairs, minimumPairs = 5) {
       ["precision", "finding_precision"],
       ["repair_rate", "verified_repair_rate"],
       ["completion_rate", "completion_rate"],
+      ["validated_defects_per_mtok", "validated_defects_per_million_tokens"],
+      ["verified_repairs_per_mtok", "verified_repairs_per_million_tokens"],
     ];
     const negative = [
       ["regression_failures", "fewer_regression_failures"],
       ["wall_ms", "lower_wall_time"],
       ["tokens", "lower_token_use"],
+      ["tokens_per_validated_defect", "fewer_tokens_per_validated_defect"],
     ];
     for (const [metric, label] of positive) {
       if (Number.isFinite(deltaIntervals[metric]?.low) && deltaIntervals[metric].low > 0) advantages.push(label);
@@ -207,10 +253,14 @@ function aggregatePairs(scoredPairs, minimumPairs = 5) {
     }
   }
   return {
-    version: 1,
+    version: 2,
+    harness_binding: harnessBound ? "bound" : "missing",
+    ...(harnessBound ? { harness } : {}),
     samples_total: scoredPairs.length,
     samples_comparable: comparable.length,
     samples_rejected: incomplete,
+    samples_rejected_infrastructure: rejectedInfrastructure,
+    samples_rejected_negative: rejectedNegative,
     minimum_pairs_for_claim: minimumPairs,
     claim_ready: claimReady,
     graph,
@@ -222,6 +272,9 @@ function aggregatePairs(scoredPairs, minimumPairs = 5) {
       completion_rate: comparable.length ? (graph.completed_runs - baseline.completed_runs) / comparable.length : null,
       wall_ms: graph.wall_ms === null || baseline.wall_ms === null ? null : graph.wall_ms - baseline.wall_ms,
       tokens: graph.tokens === null || baseline.tokens === null ? null : graph.tokens - baseline.tokens,
+      validated_defects_per_mtok: graph.validated_defects_per_mtok === null || baseline.validated_defects_per_mtok === null ? null : graph.validated_defects_per_mtok - baseline.validated_defects_per_mtok,
+      verified_repairs_per_mtok: graph.verified_repairs_per_mtok === null || baseline.verified_repairs_per_mtok === null ? null : graph.verified_repairs_per_mtok - baseline.verified_repairs_per_mtok,
+      tokens_per_validated_defect: graph.tokens_per_validated_defect === null || baseline.tokens_per_validated_defect === null ? null : graph.tokens_per_validated_defect - baseline.tokens_per_validated_defect,
     },
     delta_intervals_95: deltaIntervals,
     statistically_supported_advantages: advantages,
@@ -229,14 +282,26 @@ function aggregatePairs(scoredPairs, minimumPairs = 5) {
       ? advantages.length
         ? `Comparable sample threshold reached. Report only these fixture-scoped advantages with paired 95% intervals: ${advantages.join(", ")}. Do not generalize beyond these fixtures.`
         : "Comparable sample threshold reached, but no measured advantage has a paired 95% interval wholly on the favorable side. Report deltas as descriptive fixture results only; do not generalize beyond these fixtures."
-      : `No performance claim allowed: need at least ${minimumPairs} complete comparable pairs and currently have ${comparable.length}.`,
-    rejected_pairs: scoredPairs.filter((pair) => !pair.comparable).map((pair) => ({
+      : !harnessBound
+        ? "No performance claim allowed: this score input has no harness binding (runner, adapter, and revision fingerprints), so its samples are descriptive history only."
+        : `No performance claim allowed: need at least ${minimumPairs} complete comparable pairs and currently have ${comparable.length}.`,
+    rejected_pairs: rejected.map((pair) => ({
       fixture_id: pair.fixture_id,
       repetition: pair.repetition,
+      rejection_class: pair.rejection_class,
       errors: pair.comparability_errors,
     })),
     report_sha256: sha256(JSON.stringify(scoredPairs)),
   };
 }
 
-export { aggregatePairs, armMetrics, comparabilityErrors, pairedMeanInterval, scorePair, usageTotal, wilsonInterval };
+export {
+  aggregatePairs,
+  armMetrics,
+  classifyRejection,
+  comparabilityErrors,
+  pairedMeanInterval,
+  scorePair,
+  usageTotal,
+  wilsonInterval,
+};

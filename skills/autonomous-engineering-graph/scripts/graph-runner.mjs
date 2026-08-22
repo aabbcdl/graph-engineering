@@ -12013,6 +12013,7 @@ export {
   executeGarbageCollection,
   runDiffSummary,
   previewRun,
+  RUN_VERSION,
   dependencyContext,
   nodeSandboxMode,
   nodeInputBudget,

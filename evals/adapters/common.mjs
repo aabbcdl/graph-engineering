@@ -51,7 +51,7 @@ function isRepositoryFinding(finding) {
   );
 }
 
-async function finishEvaluation({ args, status, usage, queueMs, rawFindings, completedGates, artifacts = {} }) {
+async function finishEvaluation({ args, status, usage, queueMs, rawFindings, completedGates, artifacts = {}, identity = null }) {
   const evaluator = await loadEvaluator(args.fixtureId);
   const graded = await evaluator.evaluate(args.workspace, rawFindings);
   const result = {
@@ -60,6 +60,7 @@ async function finishEvaluation({ args, status, usage, queueMs, rawFindings, com
     reasoning_effort: args.reasoningEffort,
     token_budget: args.tokenBudget,
     usage: normalizedUsage(usage),
+    harness_identity: identity,
     findings: graded.findings,
     regression_checks: graded.regression_checks,
     completed_gates: completedGates && graded.regression_checks.every((check) => check.status === "pass"),

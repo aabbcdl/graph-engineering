@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ const args = evaluationArguments();
 const goal = await readGoal(args);
 const projectRoot = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const runner = path.join(projectRoot, "skills", "autonomous-engineering-graph", "scripts", "graph-runner.mjs");
+const runnerSha256 = createHash("sha256").update(await readFile(runner)).digest("hex");
 // Keep low-budget pilots bounded, but give the full pilot the same three-round
 // correction budget as the production runner. This measures completion rather
 // than making the evaluation fail solely on a recoverable final-review gap.
@@ -93,6 +95,7 @@ await finishEvaluation({
   queueMs: completion?.cost?.queue_ms || 0,
   rawFindings,
   completedGates: summary.status === "completed" && requiredChecksPass && independentPass && applyPass,
+  identity: { runner_sha256: runnerSha256, run_version: Number.isInteger(run?.version) ? run.version : null },
   artifacts: {
     run_id: summary.run_id || null,
     run_dir: summary.run_dir || null,

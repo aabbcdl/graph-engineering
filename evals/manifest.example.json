@@ -3,6 +3,7 @@
   "model": "same-model-for-both-arms",
   "reasoning_effort": "high",
   "token_budget": 120000,
+  "timeout_minutes": 180,
   "minimum_pairs_for_claim": 5,
   "fixtures": [
     {

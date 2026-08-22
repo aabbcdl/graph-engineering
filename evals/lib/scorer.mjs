@@ -30,6 +30,80 @@ function wilsonInterval(successes, total, z = 1.96) {
 // about the measurement itself (adapter contract, identity, unknown usage,
 // declaration mismatch) makes the sample infrastructure-invalid instead.
 const NEGATIVE_RESULT_PATTERNS = [/did not complete/, /exceeded token budget/];
+const HARNESS_HASH_FIELDS = [
+  "runner_sha256",
+  "runtime_sha256",
+  "evals_lib_sha256",
+  "adapters_sha256",
+  "manifest_sha256",
+];
+const HARNESS_ENVIRONMENT_FIELDS = ["node", "platform", "arch"];
+
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function gitRevision(value) {
+  return typeof value === "string" && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value);
+}
+
+function sha256String(value) {
+  return typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
+}
+
+function harnessValidationErrors(harness) {
+  if (harness === null || harness === undefined) return ["harness binding is missing"];
+  if (typeof harness !== "object" || Array.isArray(harness)) return ["harness binding is not an object"];
+  const errors = [];
+  if (!gitRevision(harness.revision)) errors.push("harness revision is missing or invalid");
+  for (const field of HARNESS_HASH_FIELDS) {
+    if (!sha256String(harness[field])) errors.push(`harness ${field} is missing or invalid`);
+  }
+  if (!Number.isInteger(harness.graph_run_version_expected) || harness.graph_run_version_expected <= 0) {
+    errors.push("harness graph Run schema version is missing or invalid");
+  }
+  for (const field of HARNESS_ENVIRONMENT_FIELDS) {
+    if (!nonEmptyString(harness.environment?.[field])) errors.push(`harness environment ${field} is missing`);
+  }
+  return errors;
+}
+
+function harnessBinding(harness) {
+  if (harness === null || harness === undefined) return "missing";
+  return harnessValidationErrors(harness).length ? "invalid" : "bound";
+}
+
+function identityFieldErrors(name, identity, harness) {
+  const errors = [];
+  if (!identity || typeof identity !== "object" || Array.isArray(identity)) {
+    return [`${name} adapter runner identity is missing`];
+  }
+  if (!identity.runner_sha256) errors.push(`${name} adapter runner identity is missing`);
+  for (const field of ["revision", ...HARNESS_HASH_FIELDS]) {
+    if (!identity[field]) {
+      if (field !== "runner_sha256") errors.push(`${name} adapter ${field} is missing`);
+      continue;
+    }
+    if (harness && identity[field] !== harness[field]) {
+      errors.push(`${name} ${field} differs from harness`);
+    }
+  }
+  if (harness) {
+    if (identity.graph_run_version_expected !== harness.graph_run_version_expected) {
+      errors.push(`${name} graph Run schema version expectation differs from harness`);
+    }
+    for (const field of HARNESS_ENVIRONMENT_FIELDS) {
+      if (identity.environment?.[field] !== harness.environment?.[field]) {
+        errors.push(`${name} environment ${field} differs from harness`);
+      }
+    }
+  }
+  return errors;
+}
+
+function pairedDifference(left, right) {
+  return Number.isFinite(left) && Number.isFinite(right) ? left - right : null;
+}
 
 function classifyRejection(errors) {
   if (!errors.length) return null;
@@ -39,9 +113,11 @@ function classifyRejection(errors) {
 
 function comparabilityErrors(pair, harness = null) {
   const errors = [];
+  const harnessErrors = harnessValidationErrors(harness);
+  errors.push(...harnessErrors);
   const left = pair.graph;
   const right = pair.baseline;
-  for (const field of ["fixture_sha256", "goal_sha256", "model", "reasoning_effort", "token_budget"]) {
+  for (const field of ["fixture_sha256", "goal_sha256", "model", "reasoning_effort", "token_budget", "timeout_minutes"]) {
     if (left?.[field] !== right?.[field]) errors.push(`${field} differs: graph=${left?.[field]} baseline=${right?.[field]}`);
   }
   for (const [name, arm] of [["graph", left], ["baseline", right]]) {
@@ -50,6 +126,7 @@ function comparabilityErrors(pair, harness = null) {
     if (!arm?.model) errors.push(`${name} actual model is missing`);
     if (!arm?.reasoning_effort) errors.push(`${name} actual reasoning effort is missing`);
     if (!Number.isFinite(arm?.token_budget) || arm.token_budget <= 0) errors.push(`${name} token budget is invalid`);
+    if (!Number.isFinite(arm?.timeout_minutes) || arm.timeout_minutes <= 0) errors.push(`${name} timeout budget is invalid`);
     if (!arm || arm.status !== "completed") errors.push(`${name} did not complete`);
     if (Array.isArray(arm?.harness_errors) && arm.harness_errors.length) {
       errors.push(`${name} adapter contract failed: ${arm.harness_errors.join("; ")}`);
@@ -59,7 +136,7 @@ function comparabilityErrors(pair, harness = null) {
     else if (Number.isFinite(arm.token_budget) && used > arm.token_budget) {
       errors.push(`${name} exceeded token budget: ${used}/${arm.token_budget}`);
     }
-    if (!arm?.harness_identity?.runner_sha256) errors.push(`${name} adapter runner identity is missing`);
+    errors.push(...identityFieldErrors(name, arm?.harness_identity, harness));
   }
   const graphIdentity = left?.harness_identity;
   const baselineIdentity = right?.harness_identity;
@@ -73,6 +150,16 @@ function comparabilityErrors(pair, harness = null) {
     if (!Number.isInteger(graphIdentity?.run_version)) errors.push("graph adapter did not report its Run schema version");
     else if (graphIdentity.run_version !== expectedRunVersion) {
       errors.push(`graph Run schema version ${graphIdentity.run_version} differs from harness expectation ${expectedRunVersion}`);
+    }
+  }
+  if (Number.isFinite(left?.token_budget)) {
+    if (graphIdentity?.run_budget?.max_tokens !== left.token_budget) {
+      errors.push(`graph Run max token budget differs from declared token budget`);
+    }
+  }
+  if (Number.isFinite(left?.timeout_minutes)) {
+    if (graphIdentity?.run_budget?.max_minutes !== left.timeout_minutes) {
+      errors.push(`graph Run max minute budget differs from declared timeout`);
     }
   }
   return errors;
@@ -131,8 +218,8 @@ function scorePair(pair, truth, harness = null) {
 }
 
 function average(values) {
-  const known = values.filter(Number.isFinite);
-  return known.length ? known.reduce((sum, value) => sum + value, 0) / known.length : null;
+  if (!values.length || values.some((value) => !Number.isFinite(value))) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function tCritical95(degreesOfFreedom) {
@@ -177,13 +264,12 @@ function tCritical95(degreesOfFreedom) {
 }
 
 function pairedMeanInterval(values, confidence = 0.95) {
-  const known = values.filter(Number.isFinite);
-  if (!known.length) return null;
-  const mean = average(known);
-  if (known.length === 1) return { low: null, high: null };
-  const variance = known.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / (known.length - 1);
-  const standardError = Math.sqrt(variance / known.length);
-  const critical = confidence === 0.95 ? tCritical95(known.length - 1) : null;
+  if (!values.length || values.some((value) => !Number.isFinite(value))) return null;
+  const mean = average(values);
+  if (values.length === 1) return { low: null, high: null };
+  const variance = values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / (values.length - 1);
+  const standardError = Math.sqrt(variance / values.length);
+  const critical = confidence === 0.95 ? tCritical95(values.length - 1) : null;
   if (!Number.isFinite(critical)) throw new Error(`Unsupported confidence level: ${confidence}`);
   const margin = critical * standardError;
   return { low: mean - margin, high: mean + margin };
@@ -195,7 +281,8 @@ function aggregatePairs(scoredPairs, minimumPairs = 5, harness = null) {
   const rejectedInfrastructure = rejected.filter((pair) => pair.rejection_class === "infrastructure").length;
   const rejectedNegative = rejected.filter((pair) => pair.rejection_class === "negative_result").length;
   const incomplete = rejected.length;
-  const harnessBound = Boolean(harness?.runner_sha256);
+  const harnessStatus = harnessBinding(harness);
+  const harnessBound = harnessStatus === "bound";
   const summarize = (arm) => ({
     samples: comparable.length,
     validated_recall: average(comparable.map((pair) => pair[arm].validated_recall)),
@@ -215,16 +302,16 @@ function aggregatePairs(scoredPairs, minimumPairs = 5, harness = null) {
   const baseline = summarize("baseline");
   const claimReady = comparable.length >= minimumPairs && incomplete === 0 && harnessBound;
   const pairedDeltas = {
-    validated_recall: comparable.map((pair) => pair.graph.validated_recall - pair.baseline.validated_recall),
-    precision: comparable.map((pair) => pair.graph.precision - pair.baseline.precision),
-    repair_rate: comparable.map((pair) => pair.graph.repair_rate - pair.baseline.repair_rate),
-    completion_rate: comparable.map((pair) => Number(pair.graph.completed_gates) - Number(pair.baseline.completed_gates)),
-    regression_failures: comparable.map((pair) => pair.graph.regression_failures - pair.baseline.regression_failures),
-    wall_ms: comparable.map((pair) => pair.graph.wall_ms - pair.baseline.wall_ms),
-    tokens: comparable.map((pair) => pair.graph.tokens - pair.baseline.tokens),
-    validated_defects_per_mtok: comparable.map((pair) => pair.graph.validated_defects_per_mtok - pair.baseline.validated_defects_per_mtok),
-    verified_repairs_per_mtok: comparable.map((pair) => pair.graph.verified_repairs_per_mtok - pair.baseline.verified_repairs_per_mtok),
-    tokens_per_validated_defect: comparable.map((pair) => pair.graph.tokens_per_validated_defect - pair.baseline.tokens_per_validated_defect),
+    validated_recall: comparable.map((pair) => pairedDifference(pair.graph.validated_recall, pair.baseline.validated_recall)),
+    precision: comparable.map((pair) => pairedDifference(pair.graph.precision, pair.baseline.precision)),
+    repair_rate: comparable.map((pair) => pairedDifference(pair.graph.repair_rate, pair.baseline.repair_rate)),
+    completion_rate: comparable.map((pair) => pairedDifference(Number(pair.graph.completed_gates), Number(pair.baseline.completed_gates))),
+    regression_failures: comparable.map((pair) => pairedDifference(pair.graph.regression_failures, pair.baseline.regression_failures)),
+    wall_ms: comparable.map((pair) => pairedDifference(pair.graph.wall_ms, pair.baseline.wall_ms)),
+    tokens: comparable.map((pair) => pairedDifference(pair.graph.tokens, pair.baseline.tokens)),
+    validated_defects_per_mtok: comparable.map((pair) => pairedDifference(pair.graph.validated_defects_per_mtok, pair.baseline.validated_defects_per_mtok)),
+    verified_repairs_per_mtok: comparable.map((pair) => pairedDifference(pair.graph.verified_repairs_per_mtok, pair.baseline.verified_repairs_per_mtok)),
+    tokens_per_validated_defect: comparable.map((pair) => pairedDifference(pair.graph.tokens_per_validated_defect, pair.baseline.tokens_per_validated_defect)),
   };
   const deltaIntervals = Object.fromEntries(
     Object.entries(pairedDeltas).map(([metric, values]) => [metric, pairedMeanInterval(values)]),
@@ -254,7 +341,8 @@ function aggregatePairs(scoredPairs, minimumPairs = 5, harness = null) {
   }
   return {
     version: 2,
-    harness_binding: harnessBound ? "bound" : "missing",
+    harness_binding: harnessStatus,
+    harness_validation_errors: harnessValidationErrors(harness),
     ...(harnessBound ? { harness } : {}),
     samples_total: scoredPairs.length,
     samples_comparable: comparable.length,
@@ -266,15 +354,15 @@ function aggregatePairs(scoredPairs, minimumPairs = 5, harness = null) {
     graph,
     baseline,
     deltas: {
-      validated_recall: graph.validated_recall === null || baseline.validated_recall === null ? null : graph.validated_recall - baseline.validated_recall,
-      precision: graph.precision === null || baseline.precision === null ? null : graph.precision - baseline.precision,
-      repair_rate: graph.repair_rate === null || baseline.repair_rate === null ? null : graph.repair_rate - baseline.repair_rate,
-      completion_rate: comparable.length ? (graph.completed_runs - baseline.completed_runs) / comparable.length : null,
-      wall_ms: graph.wall_ms === null || baseline.wall_ms === null ? null : graph.wall_ms - baseline.wall_ms,
-      tokens: graph.tokens === null || baseline.tokens === null ? null : graph.tokens - baseline.tokens,
-      validated_defects_per_mtok: graph.validated_defects_per_mtok === null || baseline.validated_defects_per_mtok === null ? null : graph.validated_defects_per_mtok - baseline.validated_defects_per_mtok,
-      verified_repairs_per_mtok: graph.verified_repairs_per_mtok === null || baseline.verified_repairs_per_mtok === null ? null : graph.verified_repairs_per_mtok - baseline.verified_repairs_per_mtok,
-      tokens_per_validated_defect: graph.tokens_per_validated_defect === null || baseline.tokens_per_validated_defect === null ? null : graph.tokens_per_validated_defect - baseline.tokens_per_validated_defect,
+      validated_recall: pairedDifference(graph.validated_recall, baseline.validated_recall),
+      precision: pairedDifference(graph.precision, baseline.precision),
+      repair_rate: pairedDifference(graph.repair_rate, baseline.repair_rate),
+      completion_rate: comparable.length ? pairedDifference(graph.completed_runs, baseline.completed_runs) / comparable.length : null,
+      wall_ms: pairedDifference(graph.wall_ms, baseline.wall_ms),
+      tokens: pairedDifference(graph.tokens, baseline.tokens),
+      validated_defects_per_mtok: pairedDifference(graph.validated_defects_per_mtok, baseline.validated_defects_per_mtok),
+      verified_repairs_per_mtok: pairedDifference(graph.verified_repairs_per_mtok, baseline.verified_repairs_per_mtok),
+      tokens_per_validated_defect: pairedDifference(graph.tokens_per_validated_defect, baseline.tokens_per_validated_defect),
     },
     delta_intervals_95: deltaIntervals,
     statistically_supported_advantages: advantages,
@@ -282,8 +370,8 @@ function aggregatePairs(scoredPairs, minimumPairs = 5, harness = null) {
       ? advantages.length
         ? `Comparable sample threshold reached. Report only these fixture-scoped advantages with paired 95% intervals: ${advantages.join(", ")}. Do not generalize beyond these fixtures.`
         : "Comparable sample threshold reached, but no measured advantage has a paired 95% interval wholly on the favorable side. Report deltas as descriptive fixture results only; do not generalize beyond these fixtures."
-      : !harnessBound
-        ? "No performance claim allowed: this score input has no harness binding (runner, adapter, and revision fingerprints), so its samples are descriptive history only."
+      : harnessStatus !== "bound"
+        ? `No performance claim allowed: no harness binding (${harnessStatus}); samples are descriptive history only until the complete launch fingerprint is validated.`
         : `No performance claim allowed: need at least ${minimumPairs} complete comparable pairs and currently have ${comparable.length}.`,
     rejected_pairs: rejected.map((pair) => ({
       fixture_id: pair.fixture_id,

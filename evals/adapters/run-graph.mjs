@@ -1,18 +1,23 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { evaluationArguments, finishEvaluation, isRepositoryFinding, readGoal } from "./common.mjs";
+import {
+  evaluationArguments,
+  finishEvaluation,
+  graphRunnerArguments,
+  isRepositoryFinding,
+  readGoal,
+  reportedHarnessIdentity,
+} from "./common.mjs";
 
 const args = evaluationArguments();
 const goal = await readGoal(args);
 const projectRoot = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const runner = path.join(projectRoot, "skills", "autonomous-engineering-graph", "scripts", "graph-runner.mjs");
-const runnerSha256 = createHash("sha256").update(await readFile(runner)).digest("hex");
 // Keep low-budget pilots bounded, but give the full pilot the same three-round
 // correction budget as the production runner. This measures completion rather
 // than making the evaluation fail solely on a recoverable final-review gap.
@@ -20,29 +25,17 @@ const maxCorrections = args.tokenBudget >= 3_500_000 ? "3" : "2";
 const stateRoot = path.join(path.dirname(args.output), "graph-state");
 const execution = spawnSync(
   process.execPath,
-  [
+  graphRunnerArguments({
     runner,
-    "start",
-    "--workspace", args.workspace,
-    "--workspace-mode", "auto",
-    "--supervision", "stage",
-    "--goal", goal,
-    "--user-approved",
-    "--agent-backend", "codex",
-    "--no-agent-fallback",
-    "--model", args.model,
-    "--reasoning-effort", args.reasoningEffort,
-    "--max-parallel", "2",
-    "--workspace-read-lanes", "2",
-    "--max-corrections", maxCorrections,
-    "--timeout-minutes", "45",
-    "--service-retry-minutes", "10",
-    "--max-service-failures", "3",
-    "--queue-wait-minutes", "60",
-    "--state-root", stateRoot,
-    "--no-notify",
-    "--json",
-  ],
+    workspace: args.workspace,
+    goal,
+    model: args.model,
+    reasoningEffort: args.reasoningEffort,
+    tokenBudget: args.tokenBudget,
+    timeoutMinutes: args.timeoutMinutes,
+    maxCorrections,
+    stateRoot,
+  }),
   { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, windowsHide: true },
 );
 
@@ -87,6 +80,13 @@ const rawFindings = (lineage.findings || []).filter(isRepositoryFinding).map((fi
 const requiredChecksPass = (completion?.required_checks || []).every((check) => check.status === "pass");
 const independentPass = completion?.independent_review?.status === "completed" && completion?.independent_review?.gate === "pass";
 const applyPass = applyStatus === null || applyStatus.exit_code === 0;
+const identity = await reportedHarnessIdentity(args, {
+  run_version: Number.isInteger(run?.version) ? run.version : null,
+  run_budget: {
+    max_tokens: run?.budget?.max_tokens ?? null,
+    max_minutes: run?.budget?.max_minutes ?? null,
+  },
+});
 
 await finishEvaluation({
   args,
@@ -95,7 +95,7 @@ await finishEvaluation({
   queueMs: completion?.cost?.queue_ms || 0,
   rawFindings,
   completedGates: summary.status === "completed" && requiredChecksPass && independentPass && applyPass,
-  identity: { runner_sha256: runnerSha256, run_version: Number.isInteger(run?.version) ? run.version : null },
+  identity,
   artifacts: {
     run_id: summary.run_id || null,
     run_dir: summary.run_dir || null,

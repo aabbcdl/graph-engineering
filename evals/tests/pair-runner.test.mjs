@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { hashTree, runPairedEvaluation } from "../lib/pair-runner.mjs";
+import { adapterErrors, hashTree, runPairedEvaluation, validateManifest } from "../lib/pair-runner.mjs";
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const FAKE_ARM = path.join(TEST_DIR, "fake-arm.mjs");
@@ -27,6 +27,7 @@ test("paired harness freezes one fixture and gives both arms independent copies 
     model: "fixture-model",
     reasoning_effort: "high",
     token_budget: 1000,
+    timeout_minutes: 180,
     minimum_pairs_for_claim: 5,
     fixtures: [{ id: "fixture", snapshot: "fixture", goal: "Audit fixture", truth_file: "truth.json", repetitions: 2 }],
     arms: {
@@ -47,10 +48,17 @@ test("paired harness freezes one fixture and gives both arms independent copies 
   assert.equal(result.pairs[0].baseline.reasoning_effort, "high");
   assert.equal(result.pairs[0].graph.status, "completed");
   assert.equal(result.pairs[0].baseline.status, "completed");
+  assert.equal(result.pairs[0].graph.timeout_minutes, 180);
+  assert.equal(result.pairs[0].baseline.timeout_minutes, 180);
   assert.equal(result.pairs[0].graph.findings[0].defect_id, "defect-1");
   assert.equal(result.pairs[0].baseline.findings.length, 0);
+  assert.equal(result.pairs[0].graph.harness_identity.runner_sha256, result.harness.runner_sha256);
+  assert.equal(result.pairs[0].graph.harness_identity.runtime_sha256, result.harness.runtime_sha256);
+  assert.equal(result.pairs[0].graph.harness_identity.manifest_sha256, result.harness.manifest_sha256);
+  assert.equal(result.pairs[0].graph.harness_identity.run_version, result.harness.graph_run_version_expected);
   assert.equal(JSON.parse(await readFile(result.pairs_path, "utf8")).pairs.length, 2);
   assert.equal(JSON.parse(await readFile(result.pairs_path, "utf8")).fixtures[0].truth, undefined);
+  assert.deepEqual(JSON.parse(await readFile(path.join(outputDirectory, "harness.json"), "utf8")), result.harness);
   assert.deepEqual(JSON.parse(await readFile(result.score_input_path, "utf8")).fixtures[0].truth, {
     defects: [{ id: "defect-1" }],
   });
@@ -75,6 +83,7 @@ test("every evaluation records the harness fingerprint that produced it", async 
     model: "fixture-model",
     reasoning_effort: "high",
     token_budget: 1000,
+    timeout_minutes: 180,
     fixtures: [{ id: "fixture", snapshot: "fixture", goal: "Audit fixture", truth_file: "truth.json", repetitions: 1 }],
     arms: {
       graph: { command: [process.execPath, FAKE_ARM] },
@@ -89,6 +98,7 @@ test("every evaluation records the harness fingerprint that produced it", async 
   assert.equal(result.harness.runner_sha256, runnerSha256);
   assert.equal(result.harness.graph_run_version_expected, 3);
   assert.match(String(result.harness.runtime_sha256), /^[0-9a-f]{64}$/);
+  assert.match(String(result.harness.evals_lib_sha256), /^[0-9a-f]{64}$/);
   assert.match(String(result.harness.adapters_sha256), /^[0-9a-f]{64}$/);
   assert.equal(result.harness.environment.node, process.version);
   assert.equal(result.harness.environment.platform, process.platform);
@@ -96,7 +106,44 @@ test("every evaluation records the harness fingerprint that produced it", async 
     result.manifest_sha256,
     createHash("sha256").update(manifestText).digest("hex"),
   );
+  assert.equal(result.harness.manifest_sha256, result.manifest_sha256);
   const persisted = JSON.parse(await readFile(result.score_input_path, "utf8"));
   assert.equal(persisted.harness.runner_sha256, runnerSha256);
   assert.equal(persisted.manifest_sha256, result.manifest_sha256);
+});
+
+test("evaluation manifests require one positive shared wall-time budget", () => {
+  const manifest = {
+    version: 1,
+    model: "fixture-model",
+    reasoning_effort: "high",
+    token_budget: 1000,
+    fixtures: [{ id: "fixture", snapshot: "fixture", goal: "Audit fixture", truth_file: "truth.json", repetitions: 1 }],
+    arms: {
+      graph: { command: [process.execPath, FAKE_ARM] },
+      baseline: { command: [process.execPath, FAKE_ARM] },
+    },
+  };
+  assert.throws(() => validateManifest(manifest), /timeout_minutes must be a positive integer/);
+  assert.throws(() => validateManifest({ ...manifest, timeout_minutes: 180.5 }), /timeout_minutes must be a positive integer/);
+  assert.doesNotThrow(() => validateManifest({ ...manifest, timeout_minutes: 180 }));
+});
+
+test("adapter contract rejects a changed declared wall-time budget", () => {
+  const errors = adapterErrors({
+    model: "fixture-model",
+    reasoning_effort: "high",
+    token_budget: 1000,
+    timeout_minutes: 90,
+    usage: { input_tokens: 10, output_tokens: 20 },
+    findings: [],
+    regression_checks: [],
+    completed_gates: true,
+  }, {
+    model: "fixture-model",
+    reasoningEffort: "high",
+    tokenBudget: 1000,
+    timeoutMinutes: 180,
+  });
+  assert.ok(errors.some((error) => /reported timeout minutes 90 does not match 180/.test(error)));
 });

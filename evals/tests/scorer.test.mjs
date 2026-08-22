@@ -3,28 +3,59 @@ import test from "node:test";
 import { aggregatePairs, classifyRejection, comparabilityErrors, scorePair } from "../lib/scorer.mjs";
 
 const truth = { defects: [{ id: "defect-1" }, { id: "defect-2" }] };
+const hash = (character) => character.repeat(64);
 const harness = {
-  revision: "test-revision",
-  runner_sha256: "runner-hash-1",
+  revision: hash("a"),
+  runner_sha256: hash("b"),
+  runtime_sha256: hash("c"),
+  evals_lib_sha256: hash("d"),
+  adapters_sha256: hash("e"),
+  manifest_sha256: hash("f"),
   graph_run_version_expected: 3,
+  environment: { node: "v24.0.0", platform: "win32", arch: "x64" },
 };
 
+function adapterIdentity(overrides = {}) {
+  return {
+    revision: harness.revision,
+    runner_sha256: harness.runner_sha256,
+    runtime_sha256: harness.runtime_sha256,
+    evals_lib_sha256: harness.evals_lib_sha256,
+    adapters_sha256: harness.adapters_sha256,
+    manifest_sha256: harness.manifest_sha256,
+    graph_run_version_expected: harness.graph_run_version_expected,
+    environment: { ...harness.environment },
+    run_version: 3,
+    run_budget: { max_tokens: 1000, max_minutes: 180 },
+    ...overrides,
+  };
+}
+
 function arm(overrides = {}) {
+  const tokenBudget = overrides.token_budget ?? 1000;
+  const timeoutMinutes = Object.hasOwn(overrides, "timeout_minutes") ? overrides.timeout_minutes : 180;
+  const identity = Object.hasOwn(overrides, "harness_identity")
+    ? overrides.harness_identity
+    : adapterIdentity({ run_budget: { max_tokens: tokenBudget, max_minutes: timeoutMinutes } });
   return {
     status: "completed",
     fixture_sha256: "fixture-hash",
     goal_sha256: "goal-hash",
     model: "same-model",
     reasoning_effort: "high",
-    token_budget: 1000,
+    token_budget: tokenBudget,
+    timeout_minutes: timeoutMinutes,
     usage: { input_tokens: 300, output_tokens: 200 },
-    harness_identity: { runner_sha256: "runner-hash-1", run_version: 3 },
+    harness_identity: identity,
     findings: [],
     regression_checks: [],
     completed_gates: true,
     wall_ms: 100,
     queue_ms: 0,
     ...overrides,
+    token_budget: tokenBudget,
+    timeout_minutes: timeoutMinutes,
+    harness_identity: identity,
   };
 }
 
@@ -75,10 +106,20 @@ test("snapshot, goal, model, effort, and budget mismatches reject a pair", () =>
     ["model", "other-model"],
     ["reasoning_effort", "medium"],
     ["token_budget", 2000],
+    ["timeout_minutes", 90],
   ]) {
     const errors = comparabilityErrors(pair(1, arm(), arm({ [field]: value })), harness);
     assert.ok(errors.some((error) => error.startsWith(`${field} differs`)), `${field} mismatch was accepted`);
   }
+});
+
+test("an arm must report a positive wall-time budget before it can be comparable", () => {
+  const errors = comparabilityErrors(
+    pair(1, arm({ timeout_minutes: undefined }), arm({ timeout_minutes: undefined })),
+    harness,
+  );
+  assert.ok(errors.some((error) => /graph timeout budget is invalid/.test(error)));
+  assert.ok(errors.some((error) => /baseline timeout budget is invalid/.test(error)));
 });
 
 test("a token-budget overrun and an adapter contract failure reject a pair", () => {
@@ -97,23 +138,67 @@ test("missing adapter identity rejects a pair as an infrastructure-invalid sampl
 
 test("runner identity mismatch between arms rejects a pair", () => {
   const mismatched = comparabilityErrors(
-    pair(1, arm(), arm({ harness_identity: { runner_sha256: "runner-hash-2", run_version: 3 } })),
+    pair(1, arm(), arm({ harness_identity: adapterIdentity({ runner_sha256: hash("9") }) })),
     harness,
   );
   assert.ok(mismatched.some((error) => /runner identity differs between arms/.test(error)));
 });
 
+test("both arms must match the launch fingerprint, not merely each other", () => {
+  const driftedIdentity = adapterIdentity({
+    runner_sha256: hash("1"),
+    runtime_sha256: hash("2"),
+    revision: hash("3"),
+  });
+  const scored = Array.from({ length: 5 }, (_, index) => scorePair(
+    pair(index + 1, arm({ harness_identity: driftedIdentity }), arm({ harness_identity: driftedIdentity })),
+    truth,
+    harness,
+  ));
+  const report = aggregatePairs(scored, 5, harness);
+  assert.ok(scored[0].comparability_errors.some((error) => /graph runner_sha256 differs from harness/.test(error)));
+  assert.equal(report.samples_rejected_infrastructure, 5);
+  assert.equal(report.claim_ready, false);
+});
+
+test("an incomplete harness cannot unlock a performance claim or skip Run-version validation", () => {
+  const incompleteHarness = { runner_sha256: harness.runner_sha256 };
+  const scored = Array.from({ length: 5 }, (_, index) => scorePair(pair(index + 1), truth, incompleteHarness));
+  const report = aggregatePairs(scored, 5, incompleteHarness);
+  assert.ok(scored[0].comparability_errors.some((error) => /harness revision is missing/.test(error)));
+  assert.equal(report.harness_binding, "invalid");
+  assert.equal(report.claim_ready, false);
+});
+
+test("a malformed harness revision cannot unlock a performance claim", () => {
+  const malformedHarness = { ...harness, revision: "not-a-git-revision" };
+  const scored = Array.from({ length: 5 }, (_, index) => scorePair(pair(index + 1), truth, malformedHarness));
+  const report = aggregatePairs(scored, 5, malformedHarness);
+  assert.ok(scored[0].comparability_errors.some((error) => /harness revision is missing or invalid/.test(error)));
+  assert.equal(report.harness_binding, "invalid");
+  assert.equal(report.claim_ready, false);
+});
+
 test("a Run schema version that differs from the harness expectation rejects a pair", () => {
   const stale = comparabilityErrors(
-    pair(1, arm({ harness_identity: { runner_sha256: "runner-hash-1", run_version: 2 } }), arm()),
+    pair(1, arm({ harness_identity: adapterIdentity({ run_version: 2 }) }), arm()),
     harness,
   );
   assert.ok(stale.some((error) => /Run schema version 2 differs from harness expectation 3/.test(error)));
   const unreported = comparabilityErrors(
-    pair(1, arm({ harness_identity: { runner_sha256: "runner-hash-1", run_version: null } }), arm()),
+    pair(1, arm({ harness_identity: adapterIdentity({ run_version: null }) }), arm()),
     harness,
   );
   assert.ok(unreported.some((error) => /graph adapter did not report its Run schema version/.test(error)));
+});
+
+test("a Graph Run must persist the declared token and wall-time budgets", () => {
+  const errors = comparabilityErrors(
+    pair(1, arm({ harness_identity: adapterIdentity({ run_budget: { max_tokens: 999, max_minutes: 179 } }) }), arm()),
+    harness,
+  );
+  assert.ok(errors.some((error) => /graph Run max token budget differs/.test(error)));
+  assert.ok(errors.some((error) => /graph Run max minute budget differs/.test(error)));
 });
 
 test("rejection classes separate negative results from infrastructure failures", () => {
@@ -168,6 +253,23 @@ test("score inputs without harness binding stay descriptive and never reach clai
   assert.equal(unbound.harness_binding, "missing");
   assert.equal(unbound.harness, undefined);
   assert.match(unbound.conclusion, /no harness binding/);
+});
+
+test("tokens per validated defect stays undefined when an arm finds no validated defect", () => {
+  const scored = Array.from({ length: 5 }, (_, index) => scorePair(
+    pair(
+      index + 1,
+      arm({ findings: [] }),
+      arm({ findings: [{ defect_id: "defect-1", validated: true, fixed: true, repair_verified: true }] }),
+    ),
+    truth,
+    harness,
+  ));
+  const report = aggregatePairs(scored, 5, harness);
+  assert.equal(report.graph.tokens_per_validated_defect, null);
+  assert.equal(report.deltas.tokens_per_validated_defect, null);
+  assert.equal(report.delta_intervals_95.tokens_per_validated_defect, null);
+  assert.ok(!report.statistically_supported_advantages.includes("fewer_tokens_per_validated_defect"));
 });
 
 test("an advantage is named only when its paired 95 percent interval stays on the favorable side", () => {

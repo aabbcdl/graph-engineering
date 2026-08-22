@@ -35,6 +35,7 @@ import {
   dependencyContext,
   diffManifests,
   discoverSkills,
+  effectiveReviewLimits,
   enrichSynthesisEvidence,
   ensureNodeResultConsistency,
   ensurePlanEnvironmentContracts,
@@ -47,6 +48,7 @@ import {
   isolatedCodexConfigArgs,
   latestCompletedCorrection,
   listRuns,
+  makeLoopNode,
   modelQueueRoot,
   modelCapacityOutcome,
   mergeRunOptionsForResume,
@@ -83,6 +85,7 @@ import {
   stateRootUsageSummary,
   shouldRetrySupervisionRecheck,
   transientExecutionFailure,
+  unsatisfiedCheckIds,
   waitForBackgroundHandoff,
   WATCH_TERMINAL_STATUSES,
   workspaceBucket,
@@ -6229,6 +6232,19 @@ test("failed verification is corrected, and resume reconnects to that correction
   assert.equal(run.nodes["verification-r1"].gate, "pass");
   assert.equal(await readFile(path.join(workspace, "graph-output.txt"), "utf8"), "corrected by fake Codex\n");
 
+  const firstVerificationInput = await readFile(path.join(summary.run_dir, "nodes", "verification-r0", "input.md"), "utf8");
+  assert.doesNotMatch(firstVerificationInput, /Incremental re-verification/);
+  const incrementalVerificationInput = await readFile(path.join(summary.run_dir, "nodes", "verification-r1", "input.md"), "utf8");
+  assert.match(incrementalVerificationInput, /Incremental re-verification after correction round 1/);
+  assert.match(incrementalVerificationInput, /incremental verification round only/);
+  assert.match(incrementalVerificationInput, /fixture-verification/);
+  const completion = JSON.parse(await readFile(path.join(summary.run_dir, "completion.json"), "utf8"));
+  const mergedEvaluation = completion.machine_check_evaluation || run.machine_check_evaluation;
+  assert.equal(
+    mergedEvaluation.checks.find((check) => check.id === "fixture-verification")?.status,
+    "pass",
+  );
+
   delete run.nodes["verification-r1"];
   delete run.nodes["independent-review-r1"];
   run.node_order = run.node_order.filter((id) => !["verification-r1", "independent-review-r1"].includes(id));
@@ -9188,7 +9204,10 @@ test("preview reports the v3 contract without creating a Run or state residue", 
   assert.equal(output.creates_workspace, false);
   assert.equal(output.creates_state, false);
   assert.equal(output.plan.mode, "task");
-  assert.equal(output.plan.review_limit_per_wave, 6);
+  // The empty preview workspace is tiny, so the unpinned review fan-out
+  // auto-scales to the task floor and records the decision.
+  assert.equal(output.plan.review_limit_per_wave, 2);
+  assert.equal(output.plan.coverage.auto_review_scaling.applied, true);
   assert.ok(Array.isArray(output.plan.required_checks));
   assert.ok(Array.isArray(output.capabilities));
   assert.deepEqual(output.capabilities.map((entry) => entry.backend).sort(), ["claude", "codex"]);
@@ -9552,4 +9571,121 @@ test("recheck returns already-satisfied without starting a model process", async
   assert.equal(output.writes, 0);
   const savedRun = JSON.parse(await readFile(path.join(runDir, "run.json"), "utf8"));
   assert.equal(savedRun.rechecks, undefined);
+});
+
+test("effective review limits shrink for small workspaces and never below audit domains", async (t) => {
+  const root = await temporaryDirectory(t);
+  const small = path.join(root, "small");
+  const large = path.join(root, "large", "src");
+  await mkdir(small, { recursive: true });
+  await mkdir(large, { recursive: true });
+  await writeFile(path.join(small, "fixture.txt"), "small fixture\n", "utf8");
+  for (let index = 0; index < 40; index += 1) {
+    await writeFile(path.join(large, `module-${index}.mjs`), `export const value = ${index};\n`, "utf8");
+  }
+
+  const taskSmall = await effectiveReviewLimits({ workspace: small, mode: "task", explicit: false, perWave: 6, total: 12 });
+  assert.equal(taskSmall.perWave, 2);
+  assert.equal(taskSmall.total, 2);
+  assert.equal(taskSmall.scaling.applied, true);
+  assert.equal(taskSmall.scaling.configured.per_wave, 6);
+
+  const auditSmall = await effectiveReviewLimits({ workspace: small, mode: "audit", explicit: false, perWave: 6, total: 12 });
+  assert.equal(auditSmall.perWave, 4);
+  assert.equal(auditSmall.total, 4);
+  assert.equal(auditSmall.scaling.applied, true);
+
+  const auditLarge = await effectiveReviewLimits({ workspace: path.join(root, "large"), mode: "audit", explicit: false, perWave: 6, total: 12 });
+  assert.equal(auditLarge.perWave, 6);
+  assert.equal(auditLarge.total, 12);
+  assert.equal(auditLarge.scaling.applied, false);
+
+  const pinned = await effectiveReviewLimits({ workspace: small, mode: "audit", explicit: true, perWave: 6, total: 12 });
+  assert.equal(pinned.perWave, 6);
+  assert.equal(pinned.total, 12);
+  assert.equal(pinned.scaling.applied, false);
+});
+
+test("loop nodes scope correction rounds to the failures that caused them", () => {
+  const plan = {
+    verification_skills: ["fixture-review"],
+    implementation_skills: [],
+    review_nodes: [{ id: "review-engineering", skills: ["fixture-review"] }],
+  };
+
+  const roundZero = makeLoopNode("verification", 0, "implementation", plan, {
+    machine_check_evaluation: { checks: [{ id: "check-a", status: "fail" }] },
+  });
+  assert.equal(roundZero.incremental_check_ids, undefined);
+  assert.doesNotMatch(roundZero.focus, /Incremental re-verification/);
+
+  const priorEvaluation = {
+    checks: [
+      { id: "check-a", status: "pass" },
+      { id: "check-b", status: "fail" },
+      { id: "check-b", status: "claim_missing" },
+    ],
+  };
+  assert.deepEqual(unsatisfiedCheckIds(priorEvaluation), ["check-b"]);
+  assert.deepEqual(unsatisfiedCheckIds({ checks: [{ id: "check-ok", status: "pass" }] }), []);
+
+  const incremental = makeLoopNode("verification", 1, "correction-r1", plan, { machine_check_evaluation: priorEvaluation });
+  assert.deepEqual(incremental.incremental_check_ids, ["check-b"]);
+  assert.match(incremental.focus, /check-b/);
+  assert.ok(!incremental.focus.includes("check-a"));
+
+  const reviewRoundZero = makeLoopNode("independent_review", 0, "verification-r0", plan, {
+    findings: [{ id: "F1" }],
+    blockers: [{ reason: "rejected" }],
+  });
+  assert.doesNotMatch(reviewRoundZero.focus, /Incremental fresh-context review/);
+
+  const reviewIncremental = makeLoopNode("independent_review", 1, "verification-r1", plan, {
+    findings: [{ id: "F1", fingerprint: "fp-edge-case", title: "missed edge case" }],
+    blockers: [{ reason: "the fix missed an edge case" }],
+  });
+  assert.match(reviewIncremental.focus, /Incremental fresh-context review/);
+  assert.match(reviewIncremental.focus, /the fix missed an edge case/);
+  assert.match(reviewIncremental.focus, /fp-edge-case/);
+});
+
+test("a small-workspace run records auto review scaling without shrinking coverage below its floor", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const stateRoot = path.join(root, "state");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(workspace, "fixture.txt"), "small fixture\n", "utf8");
+  await writeSkill(path.join(workspace, ".codex"), "fixture-review", "Review the graph fixture");
+  const execution = spawnSync(
+    process.execPath,
+    [
+      RUNNER,
+      "start",
+      "--user-approved",
+      "--workspace",
+      workspace,
+      "--state-root",
+      stateRoot,
+      "--goal",
+      "Audit the fixture workspace",
+      "--workspace-mode",
+      "live",
+      "--timeout-minutes",
+      "1",
+      "--json",
+    ],
+    {
+      encoding: "utf8",
+      timeout: INTEGRATION_TIMEOUT,
+      env: { ...process.env, AEG_CODEX_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]) },
+    },
+  );
+  assert.equal(execution.status, 0, execution.stderr || execution.stdout);
+  const summary = JSON.parse(execution.stdout.trim());
+  const run = JSON.parse(await readFile(path.join(summary.run_dir, "run.json"), "utf8"));
+  assert.equal(run.options.review_limits_explicit, false);
+  assert.equal(run.plan.coverage.auto_review_scaling.applied, true);
+  assert.equal(run.plan.coverage.auto_review_scaling.workspace_files > 0, true);
+  const reviewNodes = run.node_order.filter((id) => id.startsWith("review-"));
+  assert.ok(reviewNodes.length >= 1 && reviewNodes.length <= 2, `unexpected review fan-out: ${reviewNodes.join(", ")}`);
 });

@@ -40,6 +40,14 @@
 - Added `evals/scripts/analyze-run-tokens.mjs` and `docs/eval-token-analysis.md`: per-node/per-stage token breakdowns of both completed v2 pilots. Headline: output is 2-3% of cost; the clean run spends 38.7% in five review nodes and the corrected run spends 48% in the correction loop's full re-verification/re-review rounds; supervision nodes have zero cache hits.
 - Drafted `docs/fixture-jobqueue-design.md`: a Go fixture-2 proposal (7 modules, ~2,700 lines, 20+ cross-module defects with category quotas frozen before any arm observation).
 
+### Token optimization levers 1-2
+
+- **Status:** implemented; verification below.
+- Auto review-limit scaling (`effectiveReviewLimits` + `measureWorkspaceScale`): tiny workspaces (≤30 files, ≤256 KiB) shrink the review fan-out to the four required audit domains (or two review nodes for ordinary tasks) only when no `--max-review-nodes(-per-wave)`/`--max-total-review-nodes` was set; the flag `review_limits_explicit` is parsed, persisted in `run.options`, and merged conservatively on resume (legacy saved runs count as pinned). The decision and workspace measurements are recorded in `coverage.auto_review_scaling`, surfaced in `preview`, and never shrink an audit below its required domains.
+- Incremental correction rounds: verification round ≥1 computes the previous round's unsatisfied checks (`unsatisfiedCheckIds`) and carries them as `incremental_check_ids`; `promptRequiredChecks`, the prompt heading, and the runner-side evaluation/environment classification all scope to that set; independent review round ≥1 narrows its focus to the previously flagged findings and changed surfaces while keeping full independent workspace access; the final summary fold-merges per-round `machine_check_evaluation` by check id (earlier recorded passes survive unless a later round re-ran the check).
+- Lever 4 (supervision cache prefix) was analyzed and deliberately deferred: the zero cache hits come from supervision being single-turn no-tool nodes, which cannot produce multi-turn prefix reuse; reordering the prompt would be unverified speculation.
+- Tests: extended the correction-resume test with incremental-round input assertions and the merged evaluation; added unit tests for `effectiveReviewLimits` (small/large/explicit/audit floor), `makeLoopNode`/`unsatisfiedCheckIds` scoping, and a full fake-Codex run asserting `coverage.auto_review_scaling` and the ≤2 review fan-out on a small workspace.
+
 ## Baseline failure classification (resolved)
 
 - `a required command counts when it runs inside an exit-code-capturing wrapper`: resolved under the approved strict contract (extra wrapper commands are rejected).

@@ -13,7 +13,8 @@ Every pair must use the same:
 - declared model;
 - reasoning effort;
 - token budget;
-- runner identity: both arms must self-report the SHA-256 of the `graph-runner.mjs` they executed, and the Graph arm must additionally report its Run schema version.
+- one positive `timeout_minutes` upper bound;
+- the complete launch fingerprint, including runner, runtime, harness libraries, adapters, manifest, revision, and Node environment.
 
 Both arms must complete, report backend token usage, remain within budget, and satisfy the adapter contract. A mismatch or overrun rejects the entire pair. Arm order alternates by repetition to reduce first-run and cache bias.
 
@@ -24,11 +25,16 @@ To isolate orchestration value, configure every Graph role to the same model use
 Every evaluation records a `harness` fingerprint block in `pairs.json` and `score-input.json`:
 
 - `revision`: the repository Git HEAD at run time;
-- `runner_sha256`, `runtime_sha256`, `evals_lib_sha256`, `adapters_sha256`: content hashes of everything that executed;
+- `runner_sha256`, `runtime_sha256`, `evals_lib_sha256`, `adapters_sha256`: content hashes of the execution code;
+- `manifest_sha256`: the exact evaluation manifest;
 - `graph_run_version_expected`: the Run schema version the harness requires (currently 3);
 - `environment`: Node version, platform, and architecture.
 
-Each adapter self-reports what it executed through `harness_identity` in its result. The scorer rejects any pair whose identity is missing, whose arms disagree on the runner hash, or whose Run schema version differs from the harness expectation. Score inputs without a `harness` block are `harness_binding: "missing"` and can never become `claim_ready`; their results remain descriptive history. Evaluations produced by older protocol versions (for example the August 2026 v2 Run pilots) therefore cannot be merged into new comparable sets.
+The runner persists this block in `harness.json`, passes it to both arms through `--harness-file`, and each adapter recomputes and self-reports what it actually executed through `harness_identity`. The scorer requires every fingerprint field to match the launch record, requires the two arms to agree, and requires the Graph arm's actual Run schema version and persisted token/time budgets to match the declaration.
+
+`harness_binding` is `bound` only for a complete, valid fingerprint, `missing` when no launch fingerprint exists, and `invalid` for a malformed or incomplete fingerprint. Only `bound` data can become `claim_ready`; the other states are descriptive history. Evaluations produced by older protocol versions (for example the August 2026 v2 Run pilots) therefore cannot be merged into new comparable sets.
+
+Claim-ready evaluation requires the harness itself to run from a Git checkout with a resolvable HEAD. A package-only installation cannot supply that revision and is deliberately fail-closed as descriptive history rather than producing a version-unbound claim.
 
 Rejected pairs are classified as `infrastructure` (the measurement itself failed: adapter contract, identity, unknown usage, declaration mismatch) or `negative_result` (the measured system genuinely did not finish or exceeded its budget). Both block comparability, but only the latter is evidence about the system under test.
 
@@ -49,12 +55,14 @@ Each arm command receives these appended arguments:
 --model <exact declared model>
 --reasoning-effort <level>
 --token-budget <integer>
+--timeout-minutes <positive integer>
+--harness-file <launch fingerprint JSON>
 --arm <graph|baseline>
 --fixture-id <id>
 --repetition <integer>
 ```
 
-The adapter must run its workflow inside `--workspace`, enforce or monitor the supplied budget, and write:
+The adapter must run its workflow inside `--workspace`, enforce or monitor the supplied budget, and write the declared `timeout_minutes` and a recomputed `harness_identity`. The Graph adapter passes `--max-run-tokens` and `--max-run-minutes` to `graph-runner.mjs`, then the scorer verifies the persisted Run budget. The single-agent adapter has a hard process timeout and reports observed backend usage; it does not yet have a backend-proven aggregate token stop, so an observed baseline overrun is rejected rather than being presented as symmetric proactive enforcement.
 
 ```json
 {
@@ -62,7 +70,9 @@ The adapter must run its workflow inside `--workspace`, enforce or monitor the s
   "model": "exact actual model",
   "reasoning_effort": "high",
   "token_budget": 120000,
+  "timeout_minutes": 180,
   "usage": { "input_tokens": 1000, "output_tokens": 200 },
+  "harness_identity": { "runner_sha256": "...", "graph_run_version_expected": 3 },
   "findings": [
     {
       "defect_id": "seeded-defect-id-or-null",
@@ -103,4 +113,4 @@ The scorer reports:
 - cost efficiency: `validated_defects_per_mtok`, `verified_repairs_per_mtok`, and `tokens_per_validated_defect`;
 - paired mean deltas with 95% intervals.
 
-At least five complete comparable pairs with harness binding are required before `claim_ready` becomes true. Even then, `statistically_supported_advantages` names a direction only when its paired 95% interval lies wholly on the favorable side of zero — including the cost-efficiency metrics, so a quality advantage that costs disproportionate tokens will not be named as an unqualified win. All conclusions remain scoped to the tested fixtures, models, budgets, and versions.
+`tokens_per_validated_defect` is undefined when an arm has no validated defect; undefined cost metrics produce no delta, confidence interval, or named advantage. At least five complete comparable pairs with `harness_binding: "bound"` are required before `claim_ready` becomes true. Even then, `statistically_supported_advantages` names a direction only when its paired 95% interval lies wholly on the favorable side of zero — including the cost-efficiency metrics, so a quality advantage that costs disproportionate tokens will not be named as an unqualified win. All conclusions remain scoped to the tested fixtures, models, budgets, and versions.

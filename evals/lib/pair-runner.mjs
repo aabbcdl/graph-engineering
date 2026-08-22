@@ -59,7 +59,10 @@ function validateManifest(manifest) {
   if (!manifest || manifest.version !== 1) throw new Error("Evaluation manifest version must be 1");
   requiredString(manifest.model, "model");
   requiredString(manifest.reasoning_effort, "reasoning_effort");
-  if (!Number.isFinite(manifest.token_budget) || manifest.token_budget <= 0) throw new Error("token_budget must be positive");
+  if (!Number.isSafeInteger(manifest.token_budget) || manifest.token_budget <= 0) throw new Error("token_budget must be a positive integer");
+  if (!Number.isSafeInteger(manifest.timeout_minutes) || manifest.timeout_minutes <= 0) {
+    throw new Error("timeout_minutes must be a positive integer");
+  }
   if (!Array.isArray(manifest.fixtures) || !manifest.fixtures.length) throw new Error("fixtures must not be empty");
   for (const arm of ["graph", "baseline"]) {
     if (!Array.isArray(manifest.arms?.[arm]?.command) || !manifest.arms[arm].command.length) {
@@ -127,6 +130,9 @@ function adapterErrors(raw, expected) {
   if (raw.token_budget !== expected.tokenBudget) {
     errors.push(`reported token budget ${raw.token_budget ?? "missing"} does not match ${expected.tokenBudget}`);
   }
+  if (raw.timeout_minutes !== expected.timeoutMinutes) {
+    errors.push(`reported timeout minutes ${raw.timeout_minutes ?? "missing"} does not match ${expected.timeoutMinutes}`);
+  }
   if (!raw.usage || !Number.isFinite(raw.usage.input_tokens) || !Number.isFinite(raw.usage.output_tokens)) {
     errors.push("backend-reported input and output token usage is required");
   }
@@ -136,7 +142,18 @@ function adapterErrors(raw, expected) {
   return errors;
 }
 
-async function runArm({ arm, command, frozenSnapshot, pairDirectory, manifestDirectory, fixture, repetition, fixtureSha, manifest }) {
+async function runArm({
+  arm,
+  command,
+  frozenSnapshot,
+  pairDirectory,
+  manifestDirectory,
+  fixture,
+  repetition,
+  fixtureSha,
+  manifest,
+  harnessPath,
+}) {
   const workspace = path.join(pairDirectory, `${arm}-workspace`);
   await cp(frozenSnapshot, workspace, { recursive: true, force: false, errorOnExist: true, verbatimSymlinks: true });
   if ((await hashTree(workspace)) !== fixtureSha) throw new Error(`Failed to reproduce frozen snapshot for ${arm}`);
@@ -152,10 +169,14 @@ async function runArm({ arm, command, frozenSnapshot, pairDirectory, manifestDir
     "--model", manifest.model,
     "--reasoning-effort", manifest.reasoning_effort,
     "--token-budget", String(manifest.token_budget),
+    "--harness-file", harnessPath,
     "--arm", arm,
     "--fixture-id", fixture.id,
     "--repetition", String(repetition),
   ];
+  if (Number.isFinite(manifest.timeout_minutes) && manifest.timeout_minutes > 0) {
+    argv.push("--timeout-minutes", String(manifest.timeout_minutes));
+  }
   const processResult = await runProcess(argv, {
     cwd: manifestDirectory,
     stdoutPath,
@@ -179,6 +200,7 @@ async function runArm({ arm, command, frozenSnapshot, pairDirectory, manifestDir
     model: manifest.model,
     reasoningEffort: manifest.reasoning_effort,
     tokenBudget: manifest.token_budget,
+    timeoutMinutes: manifest.timeout_minutes,
   }) : [readError];
   if (processResult.code !== 0) errors.push(`adapter exited with code ${processResult.code ?? "null"}`);
   if (processResult.timed_out) errors.push("adapter timed out");
@@ -214,7 +236,7 @@ async function sha256File(target) {
   return createHash("sha256").update(await readFile(target)).digest("hex");
 }
 
-async function harnessIdentity() {
+async function harnessIdentity({ manifestSha256 = null } = {}) {
   const runnerPath = path.join(PROJECT_ROOT, "skills", "autonomous-engineering-graph", "scripts", "graph-runner.mjs");
   const revision = spawnSync("git", ["rev-parse", "HEAD"], { cwd: PROJECT_ROOT, encoding: "utf8" });
   return {
@@ -223,6 +245,7 @@ async function harnessIdentity() {
     runtime_sha256: await hashTree(path.join(PROJECT_ROOT, "skills", "autonomous-engineering-graph", "scripts", "runtime")),
     evals_lib_sha256: await hashTree(path.join(PROJECT_ROOT, "evals", "lib")),
     adapters_sha256: await hashTree(path.join(PROJECT_ROOT, "evals", "adapters")),
+    manifest_sha256: manifestSha256,
     graph_run_version_expected: RUN_VERSION,
     environment: { node: process.version, platform: process.platform, arch: process.arch },
   };
@@ -234,14 +257,17 @@ async function runPairedEvaluation({ manifestPath, outputDirectory }) {
   const manifestContent = await readFile(resolvedManifest, "utf8");
   const manifest = JSON.parse(manifestContent);
   validateManifest(manifest);
-  const harness = await harnessIdentity();
+  const manifestSha256 = sha256(manifestContent);
+  const harness = await harnessIdentity({ manifestSha256 });
   const resolvedOutput = path.resolve(outputDirectory);
   if (await exists(resolvedOutput)) throw new Error(`Output directory already exists: ${resolvedOutput}`);
   await mkdir(resolvedOutput, { recursive: true });
+  const harnessPath = path.join(resolvedOutput, "harness.json");
+  await writeFile(harnessPath, `${JSON.stringify(harness, null, 2)}\n`, "utf8");
   const results = {
     version: 1,
     manifest: resolvedManifest,
-    manifest_sha256: createHash("sha256").update(manifestContent).digest("hex"),
+    manifest_sha256: manifestSha256,
     harness,
     generated_at: new Date().toISOString(),
     minimum_pairs_for_claim: manifest.minimum_pairs_for_claim || 5,
@@ -271,6 +297,7 @@ async function runPairedEvaluation({ manifestPath, outputDirectory }) {
           repetition,
           fixtureSha: frozen.sha256,
           manifest,
+          harnessPath,
         });
       }
       if ((await hashTree(frozen.target)) !== frozen.sha256) throw new Error(`Adapter modified frozen fixture: ${fixture.id}`);
@@ -293,4 +320,4 @@ async function runPairedEvaluation({ manifestPath, outputDirectory }) {
   };
 }
 
-export { adapterErrors, argumentValue, hashTree, runPairedEvaluation, validateManifest };
+export { adapterErrors, argumentValue, harnessIdentity, hashTree, runPairedEvaluation, validateManifest };

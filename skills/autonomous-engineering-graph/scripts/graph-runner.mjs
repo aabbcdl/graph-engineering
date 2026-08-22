@@ -97,6 +97,7 @@ const NODE_RUNTIME_CONTRACT_SHA256 = sha256(readFileSync(NODE_RUNTIME_CONTRACT_P
 const RUN_VERSION = 3;
 const DEFAULT_PARALLEL = 2;
 const DEFAULT_MAX_REVIEW_NODES = 6;
+const REQUIRED_AUDIT_REVIEW_DOMAINS = ["engineering", "product", "experience", "security"];
 const DEFAULT_MAX_TOTAL_REVIEW_NODES = 12;
 const DEFAULT_CORRECTIONS = 3;
 const DEFAULT_TIMEOUT_MINUTES = 45;
@@ -2218,6 +2219,86 @@ function classifyEnvironmentGap(result, requiredChecks, proof = {}) {
   };
 }
 
+const REVIEW_SCALE_SKIP_DIRECTORIES = new Set([".git", "node_modules", ".hg", ".svn", "dist", "build", "out", "coverage", ".workbuddy", ".tmp"]);
+const SMALL_WORKSPACE_FILE_LIMIT = 30;
+const SMALL_WORKSPACE_BYTE_LIMIT = 256 * 1024;
+const REVIEW_SCALE_WALK_FILE_CAP = 4_000;
+const REVIEW_SCALE_WALK_BYTE_CAP = 64 * 1024 * 1024;
+
+// A bounded, read-only walk that classifies workspace scale for review
+// fan-out sizing. It never reads file contents and stops early once the
+// workspace is clearly beyond the small-fixture thresholds.
+async function measureWorkspaceScale(workspace) {
+  let files = 0;
+  let bytes = 0;
+  let truncated = false;
+  const stack = [path.resolve(workspace)];
+  while (stack.length) {
+    const current = stack.pop();
+    let entries = [];
+    try {
+      entries = await readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith(".git") || REVIEW_SCALE_SKIP_DIRECTORIES.has(entry.name)) continue;
+      const target = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(target);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      files += 1;
+      try {
+        bytes += (await lstat(target)).size;
+      } catch {}
+      if (files > REVIEW_SCALE_WALK_FILE_CAP || bytes > REVIEW_SCALE_WALK_BYTE_CAP) {
+        truncated = true;
+        break;
+      }
+    }
+    if (truncated) break;
+  }
+  return { files, bytes, truncated };
+}
+
+// Auto review-limit scaling: a tiny workspace cannot feed five parallel
+// domain reviews without each node re-reading the same handful of files.
+// The per-wave cap shrinks only when the owner did not pin limits
+// explicitly, and an audit never drops below its four required domains.
+async function effectiveReviewLimits({ workspace, mode, explicit, perWave, total }) {
+  const configured = {
+    per_wave: perWave,
+    total,
+  };
+  if (explicit) {
+    return { perWave, total, scaling: { applied: false, reason: "review limits were set explicitly", configured } };
+  }
+  const scale = await measureWorkspaceScale(workspace);
+  const small = !scale.truncated && scale.files <= SMALL_WORKSPACE_FILE_LIMIT && scale.bytes <= SMALL_WORKSPACE_BYTE_LIMIT;
+  if (!small) {
+    return { perWave, total, scaling: { applied: false, reason: "workspace exceeds the small-fixture thresholds", configured, workspace_files: scale.files, workspace_bytes: scale.bytes } };
+  }
+  const auditFloor = mode === "audit" ? REQUIRED_AUDIT_REVIEW_DOMAINS.length : 0;
+  const taskFloor = 2;
+  const floor = Math.max(auditFloor, taskFloor);
+  const scaledPerWave = Math.max(floor, Math.min(perWave, floor));
+  const scaledTotal = Math.max(floor, Math.min(total, floor));
+  return {
+    perWave: scaledPerWave,
+    total: scaledTotal,
+    scaling: {
+      applied: true,
+      reason: "small workspace: review fan-out shrunk to the domain floor to avoid redundant re-reading",
+      configured,
+      scaled: { per_wave: scaledPerWave, total: scaledTotal },
+      workspace_files: scale.files,
+      workspace_bytes: scale.bytes,
+    },
+  };
+}
+
 function normalizePlannerResult(
   plan,
   catalog,
@@ -2290,7 +2371,7 @@ function normalizePlannerResult(
       skills: fallback ? [fallback] : [],
     });
   }
-  const requiredReviewDomains = mode === "audit" ? ["engineering", "product", "experience", "security"] : [];
+  const requiredReviewDomains = mode === "audit" ? REQUIRED_AUDIT_REVIEW_DOMAINS : [];
   if (mode === "audit") {
     const broadDimensions = [
       ["engineering", "Engineering quality", "Review architecture, correctness, contracts, failure paths, dependencies, and tests.", "graph-engineering-quality"],
@@ -2636,7 +2717,7 @@ function compileGraph(plan, { minimal = false } = {}) {
   };
 }
 
-function defaultDryPlan(goal, catalog) {
+function defaultDryPlan(goal, catalog, maxReviewNodes = DEFAULT_MAX_REVIEW_NODES, maxTotalReviewNodes = DEFAULT_MAX_TOTAL_REVIEW_NODES) {
   const reviewSkill = chooseFallbackSkill(catalog, [/code-review/i, /review/i]);
   const verifySkill = chooseFallbackSkill(catalog, [/verification/i, /test/i]);
   return normalizePlannerResult(
@@ -2663,6 +2744,8 @@ function defaultDryPlan(goal, catalog) {
     },
     catalog,
     goal,
+    maxReviewNodes,
+    maxTotalReviewNodes,
   );
 }
 
@@ -5572,6 +5655,10 @@ function compactDependencyProof(proof, nodeKind, compactionLevel = "standard") {
 }
 
 function promptRequiredChecks(checks, node, compactionLevel) {
+  if (Array.isArray(node?.incremental_check_ids) && node.incremental_check_ids.length) {
+    const scoped = new Set(node.incremental_check_ids.map(String));
+    checks = checks.filter((check) => scoped.has(String(check?.id)));
+  }
   if (node.kind !== "supervision" || compactionLevel !== "emergency") return checks;
   // Supervision checks coverage and gap policy; it is explicitly forbidden
   // from executing these future obligations. Keep their identity and
@@ -5662,9 +5749,11 @@ async function buildNodePrompt({ node, run, runDir, catalog, compactionLevel = "
     : "No additional skill was selected for this node; project instructions still apply.";
   const upstream = await dependencyContext(node, runDir, run, compactionLevel);
   const authorizations = JSON.stringify(run.authorizations || [], null, 2);
-  const checksHeading = node.kind === "verification"
-    ? "Required checks to execute and report in this node"
-    : "Runner-owned future verification obligations (do not execute or report as current checks in this node)";
+  const checksHeading = Array.isArray(node.incremental_check_ids) && node.incremental_check_ids.length
+    ? "Required checks for this incremental verification round only (checks that passed with recorded host evidence in an earlier round stay satisfied unless changed surfaces require a fresh run)"
+    : node.kind === "verification"
+      ? "Required checks to execute and report in this node"
+      : "Runner-owned future verification obligations (do not execute or report as current checks in this node)";
   const requiredChecksForPrompt = promptRequiredChecks(run.plan.required_checks || [], node, compactionLevel);
   const supervisionControllerContext = node.kind === "supervision" && node.stage !== "planner"
     ? JSON.stringify({ controller_managed_graph: controllerManagedGraphSummary(run.plan) }, null, 2)
@@ -6478,7 +6567,13 @@ async function runNodeOnce({ node, run, runDir, catalog, options }) {
     throw error;
   }
   let result = await parseJsonResult(execution.last_message_path);
-  const requiredChecks = Array.isArray(run.plan?.required_checks) ? run.plan.required_checks : [];
+  const planChecks = Array.isArray(run.plan?.required_checks) ? run.plan.required_checks : [];
+  const incrementalCheckIds = Array.isArray(node.incremental_check_ids) && node.incremental_check_ids.length
+    ? new Set(node.incremental_check_ids.map(String))
+    : null;
+  const requiredChecks = incrementalCheckIds
+    ? planChecks.filter((check) => incrementalCheckIds.has(String(check?.id)))
+    : planChecks;
   result = ensureNodeResultConsistency(
     result,
     node,
@@ -6899,8 +6994,35 @@ function correctionSkillsForResult(plan, upstreamResult = null) {
   return (plan.implementation_skills || []).filter((skill) => skillAllowedInNode(skill, "correction"));
 }
 
+function unsatisfiedCheckIds(evaluation) {
+  const checks = Array.isArray(evaluation?.checks) ? evaluation.checks : [];
+  return [...new Set(
+    checks
+      .filter((check) => String(check?.status || "") !== "pass")
+      .map((check) => String(check?.id || "").trim())
+      .filter(Boolean),
+  )];
+}
+
 function makeLoopNode(kind, round, dependency, plan, upstreamResult = null) {
   if (kind === "verification") {
+    // A correction round only owes evidence for the checks the previous
+    // verification round actually failed. Rounds that re-run every satisfied
+    // check multiply token cost without adding information; the runner
+    // merges per-round evaluations so earlier recorded passes stay valid.
+    const failedIds = round >= 1 ? unsatisfiedCheckIds(upstreamResult?.machine_check_evaluation) : [];
+    if (failedIds.length) {
+      return {
+        id: `verification-r${round}`,
+        title: `Verification round ${round + 1} (incremental)`,
+        kind: "verification",
+        depends_on: [dependency],
+        skills: plan.verification_skills,
+        focus: `Incremental re-verification after correction round ${round}. Only these required checks were unsatisfied in the previous round: ${failedIds.join(", ")}. Re-execute and report exactly those checks against the corrected workspace. A check that already passed with recorded host evidence stays satisfied unless the correction changed a surface it covers; when it did, re-run that check too and report it with its fresh evidence. Inspect real command outputs; never claim a check without a current-round command or an explicit earlier recorded pass.`,
+        write_access: false,
+        incremental_check_ids: failedIds,
+      };
+    }
     return {
       id: `verification-r${round}`,
       title: `Verification round ${round + 1}`,
@@ -6918,6 +7040,24 @@ function makeLoopNode(kind, round, dependency, plan, upstreamResult = null) {
       ? verificationSkills
       : [...new Set(plan.review_nodes.flatMap((review) => review.skills))]
     ).filter((skill) => skillAllowedInNode(skill, "independent_review")).slice(0, 2);
+    if (round >= 1 && upstreamResult) {
+      const flagged = (Array.isArray(upstreamResult.findings) ? upstreamResult.findings : [])
+        .filter((finding) => !String(finding?.id || "").startsWith("RUNNER-"))
+        .map((finding) => finding?.fingerprint || finding?.id || finding?.title)
+        .filter(Boolean);
+      const rejection = upstreamResult.blockers?.[0]?.reason
+        || upstreamResult.findings?.find((finding) => finding?.id && !String(finding.id).startsWith("RUNNER-"))?.summary
+        || "the previous review rejected the result";
+      return {
+        id: `independent-review-r${round}`,
+        title: `Independent review round ${round + 1} (incremental)`,
+        kind: "independent_review",
+        depends_on: [dependency],
+        skills: reviewSkills,
+        focus: `Incremental fresh-context review after correction round ${round}. The previous independent review rejected the result: ${boundedText(rejection, 1_000)}. Previously flagged findings: ${flagged.join("; ") || "none were recorded"}. Re-examine exactly those findings against the current workspace, plus the surfaces the correction changed as shown by the upstream verification artifact and your own inspection. You keep full independent access to the frozen workspace; do not re-litigate surfaces the prior review accepted unless the correction touched them. Preserve upstream fingerprints and keep fresh eyes on the actual repository state.`,
+        write_access: false,
+      };
+    }
     return {
       id: `independent-review-r${round}`,
       title: `Independent review round ${round + 1}`,
@@ -7635,7 +7775,10 @@ async function runWorkflow({ run, graph, runDir, catalog, options }) {
     run.loop_round = round;
     run.loop_phase = "verification";
     await saveRun(runDir, run);
-    const verification = makeLoopNode("verification", round, dependency, run.plan);
+    const priorVerificationResult = round >= 1
+      ? await readJson(path.join(runDir, "nodes", `verification-r${round - 1}`, "result.json")).catch(() => null)
+      : null;
+    const verification = makeLoopNode("verification", round, dependency, run.plan, priorVerificationResult);
     const verificationResult = await runNode({ node: verification, run, runDir, catalog, options: { ...options } });
     if (verificationResult.status === "blocked") {
       if (verificationResult.environment_gap) {
@@ -7690,7 +7833,10 @@ async function runWorkflow({ run, graph, runDir, catalog, options }) {
 
     run.loop_phase = "independent_review";
     await saveRun(runDir, run);
-    const independent = makeLoopNode("independent_review", round, verification.id, run.plan);
+    const priorIndependentResult = round >= 1
+      ? await readJson(path.join(runDir, "nodes", `independent-review-r${round - 1}`, "result.json")).catch(() => null)
+      : null;
+    const independent = makeLoopNode("independent_review", round, verification.id, run.plan, priorIndependentResult);
     const independentResult = await runNode({ node: independent, run, runDir, catalog, options: { ...options } });
     if (independentResult.status === "blocked") {
       if (independentResult.environment_gap) {
@@ -9349,8 +9495,18 @@ async function generateReport(runDir, run, graph) {
       }
     }
     if (record?.kind === "verification" && result) {
-      latestVerificationChecks = result.checks || [];
-      latestMachineCheckEvaluation = result.machine_check_evaluation || null;
+      // Incremental rounds evaluate only their scoped checks. Merge by check
+      // id across rounds so an earlier recorded pass survives unless a later
+      // round re-ran that check and reported a fresh result.
+      const reported = Array.isArray(result.checks) ? result.checks : [];
+      const reportedIds = new Set(reported.map((check) => String(check?.id)));
+      latestVerificationChecks = [
+        ...latestVerificationChecks.filter((check) => !reportedIds.has(String(check?.id))),
+        ...reported,
+      ];
+      latestMachineCheckEvaluation = mergeRecheckEvaluation(latestMachineCheckEvaluation, {
+        checks: Array.isArray(result.machine_check_evaluation?.checks) ? result.machine_check_evaluation.checks : [],
+      });
     }
     for (const claim of result?.commands || []) {
       if (claim.command && claim.exit_code === 0 && !commandClaimHasSuccessfulEvidence(claim.command, proof?.commands || [])) {
@@ -10003,6 +10159,7 @@ async function createRun({ workspace, goal, stateRoot, options }) {
         max_review_nodes: options.maxReviewNodes,
         max_review_nodes_per_wave: options.maxReviewNodesPerWave ?? options.maxReviewNodes,
         max_total_review_nodes: options.maxTotalReviewNodes ?? DEFAULT_MAX_TOTAL_REVIEW_NODES,
+        review_limits_explicit: options.reviewLimitsExplicit === true,
         max_corrections: options.maxCorrections,
         timeout_minutes: options.timeoutMinutes,
         service_retry_minutes: options.serviceRetryMinutes,
@@ -10561,13 +10718,18 @@ async function planRun({ run, runDir, options, supervisionFeedback = null }) {
       );
     }
     const rawPlan = await parseJsonResult(execution.last_message_path);
-    plan = normalizePlannerResult(
-      rawPlan,
-      catalog,
-      run.goal,
-      run.options?.max_review_nodes_per_wave ?? run.options?.max_review_nodes,
-      run.options?.max_total_review_nodes,
-    );
+    const plannedMode = ["task", "audit", "diagnosis", "review"].includes(rawPlan?.mode) ? rawPlan.mode : "task";
+    const reviewLimits = await effectiveReviewLimits({
+      workspace: run.execution_workspace || run.workspace,
+      mode: plannedMode,
+      explicit: run.options?.review_limits_explicit === true,
+      perWave: run.options?.max_review_nodes_per_wave ?? run.options?.max_review_nodes ?? DEFAULT_MAX_REVIEW_NODES,
+      total: run.options?.max_total_review_nodes ?? DEFAULT_MAX_TOTAL_REVIEW_NODES,
+    });
+    plan = normalizePlannerResult(rawPlan, catalog, run.goal, reviewLimits.perWave, reviewLimits.total);
+    if (reviewLimits.scaling) {
+      plan.coverage = { ...plan.coverage, auto_review_scaling: { ...reviewLimits.scaling, mode: plannedMode } };
+    }
     await atomicWriteJson(path.join(plannerDir, "proof.json"), {
       ...execution.proof,
       process_exit_code: execution.exit_code,
@@ -10815,6 +10977,12 @@ function normalizedOptions(raw) {
   const explicitWaveLimit = raw["max-review-nodes-per-wave"] === undefined
     ? legacyReviewLimit
     : integerOption(raw, "max-review-nodes-per-wave", DEFAULT_MAX_REVIEW_NODES, 1, 6);
+  // Auto review-limit scaling may shrink these only when the owner did not
+  // pin them explicitly. Legacy saved runs have no flag and are treated as
+  // pinned so a resume never changes its own recorded coverage.
+  const reviewLimitsExplicit = raw["max-review-nodes"] !== undefined
+    || raw["max-review-nodes-per-wave"] !== undefined
+    || raw["max-total-review-nodes"] !== undefined;
   if (raw["max-review-nodes"] !== undefined && raw["max-review-nodes-per-wave"] !== undefined && legacyReviewLimit !== explicitWaveLimit) {
     throw new Error("--max-review-nodes is a deprecated alias for --max-review-nodes-per-wave; conflicting values are not allowed");
   }
@@ -10830,6 +10998,7 @@ function normalizedOptions(raw) {
     maxReviewNodes: legacyReviewLimit,
     maxReviewNodesPerWave: explicitWaveLimit,
     maxTotalReviewNodes: integerOption(raw, "max-total-review-nodes", DEFAULT_MAX_TOTAL_REVIEW_NODES, 1, 100),
+    reviewLimitsExplicit,
     maxCorrections: integerOption(raw, "max-corrections", DEFAULT_CORRECTIONS, 0, 10),
     timeoutMinutes: integerOption(raw, "timeout-minutes", DEFAULT_TIMEOUT_MINUTES, 1, 240),
     serviceRetryMinutes: integerOption(raw, "service-retry-minutes", DEFAULT_SERVICE_RETRY_MINUTES, 0, 1_440),
@@ -10911,6 +11080,11 @@ function optionsForResume(options, raw, run) {
       raw["max-total-review-nodes"] === undefined
         ? run.options?.max_total_review_nodes ?? options.maxTotalReviewNodes
         : options.maxTotalReviewNodes,
+    reviewLimitsExplicit: raw["max-review-nodes"] !== undefined
+      || raw["max-review-nodes-per-wave"] !== undefined
+      || raw["max-total-review-nodes"] !== undefined
+      || run.options?.review_limits_explicit === true
+      || run.options?.review_limits_explicit === undefined,
     maxCorrections:
       raw["max-corrections"] === undefined ? run.options?.max_corrections ?? options.maxCorrections : options.maxCorrections,
     timeoutMinutes:
@@ -11195,7 +11369,17 @@ async function runDiffSummary(runDir, run) {
 async function previewRun({ workspace, goal, options }) {
   const resolvedWorkspace = await realpath(path.resolve(workspace));
   const catalog = await discoverSkills(resolvedWorkspace);
-  const plan = defaultDryPlan(goal, catalog);
+  const reviewLimits = await effectiveReviewLimits({
+    workspace: resolvedWorkspace,
+    mode: "task",
+    explicit: options.reviewLimitsExplicit === true,
+    perWave: options.maxReviewNodesPerWave ?? options.maxReviewNodes ?? DEFAULT_MAX_REVIEW_NODES,
+    total: options.maxTotalReviewNodes ?? DEFAULT_MAX_TOTAL_REVIEW_NODES,
+  });
+  const plan = defaultDryPlan(goal, catalog, reviewLimits.perWave, reviewLimits.total);
+  if (reviewLimits.scaling) {
+    plan.coverage = { ...plan.coverage, auto_review_scaling: { ...reviewLimits.scaling, mode: "task" } };
+  }
   const assurance = configureAssurance(options, plan, resolvedWorkspace);
   const capabilities = AGENT_BACKENDS.map((backend) => backendCapabilityMatrix(
     backend,
@@ -12014,6 +12198,9 @@ export {
   runDiffSummary,
   previewRun,
   RUN_VERSION,
+  effectiveReviewLimits,
+  makeLoopNode,
+  unsatisfiedCheckIds,
   dependencyContext,
   nodeSandboxMode,
   nodeInputBudget,

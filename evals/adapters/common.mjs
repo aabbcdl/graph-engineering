@@ -2,6 +2,8 @@ import { access, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { harnessIdentity } from "../lib/pair-runner.mjs";
+
 function argument(name) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : null;
@@ -11,6 +13,14 @@ function requiredArgument(name) {
   const value = argument(name);
   if (!value) throw new Error(`${name} is required`);
   return value;
+}
+
+function optionalPositiveNumber(name) {
+  const value = argument(name);
+  if (value === null) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`${name} must be a positive number`);
+  return parsed;
 }
 
 function evaluationArguments() {
@@ -23,10 +33,64 @@ function evaluationArguments() {
     model: requiredArgument("--model"),
     reasoningEffort: requiredArgument("--reasoning-effort"),
     tokenBudget: Number.parseInt(requiredArgument("--token-budget"), 10),
+    harnessFile: path.resolve(requiredArgument("--harness-file")),
+    timeoutMinutes: optionalPositiveNumber("--timeout-minutes"),
     arm: requiredArgument("--arm"),
     fixtureId,
     repetition: Number.parseInt(requiredArgument("--repetition"), 10),
   };
+}
+
+async function readHarness(args) {
+  return JSON.parse(await readFile(args.harnessFile, "utf8"));
+}
+
+async function reportedHarnessIdentity(args, additions = {}) {
+  const expected = await readHarness(args);
+  return {
+    ...await harnessIdentity({ manifestSha256: expected.manifest_sha256 }),
+    ...additions,
+  };
+}
+
+function graphRunnerArguments({
+  runner,
+  workspace,
+  goal,
+  model,
+  reasoningEffort,
+  tokenBudget,
+  timeoutMinutes,
+  maxCorrections,
+  stateRoot,
+}) {
+  const args = [
+    runner,
+    "start",
+    "--workspace", workspace,
+    "--workspace-mode", "auto",
+    "--supervision", "stage",
+    "--goal", goal,
+    "--user-approved",
+    "--agent-backend", "codex",
+    "--no-agent-fallback",
+    "--model", model,
+    "--reasoning-effort", reasoningEffort,
+    "--max-parallel", "2",
+    "--workspace-read-lanes", "2",
+    "--max-corrections", maxCorrections,
+    "--max-run-tokens", String(tokenBudget),
+    "--service-retry-minutes", "10",
+    "--max-service-failures", "3",
+    "--queue-wait-minutes", "60",
+    "--state-root", stateRoot,
+    "--no-notify",
+    "--json",
+  ];
+  if (Number.isFinite(timeoutMinutes) && timeoutMinutes > 0) {
+    args.push("--max-run-minutes", String(timeoutMinutes));
+  }
+  return args;
 }
 
 async function loadEvaluator(fixtureId) {
@@ -59,6 +123,7 @@ async function finishEvaluation({ args, status, usage, queueMs, rawFindings, com
     model: args.model,
     reasoning_effort: args.reasoningEffort,
     token_budget: args.tokenBudget,
+    timeout_minutes: args.timeoutMinutes,
     usage: normalizedUsage(usage),
     harness_identity: identity,
     findings: graded.findings,
@@ -75,4 +140,13 @@ async function readGoal(args) {
   return (await readFile(args.goalFile, "utf8")).trim();
 }
 
-export { evaluationArguments, finishEvaluation, isRepositoryFinding, normalizedUsage, readGoal };
+export {
+  evaluationArguments,
+  finishEvaluation,
+  graphRunnerArguments,
+  isRepositoryFinding,
+  normalizedUsage,
+  readGoal,
+  readHarness,
+  reportedHarnessIdentity,
+};

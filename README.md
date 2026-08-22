@@ -119,6 +119,12 @@ is isolated and lifecycle scripts are disabled by default.
 For a deliberately smaller, cost-bounded run (for example, a pilot on a small
 fixture), set `--max-review-nodes <1-6>`. The default remains `6` for broad
 repository audits, and the selected limit is persisted and retained on resume.
+When no review limit is set explicitly, Graph auto-scales the fan-out for tiny
+workspaces (currently 30 files and 256 KiB or less): audits shrink to their
+four required domain reviews and ordinary tasks to two review nodes, so a
+handful of files is not re-read by five parallel specialists. The decision and
+its measurements are recorded in `coverage.auto_review_scaling`; explicitly
+set limits are never overridden.
 
 Inspect or stop one exact run without starting another:
 

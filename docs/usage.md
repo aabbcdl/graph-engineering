@@ -108,6 +108,19 @@ Use `--max-review-nodes <1-6>` only when you intentionally want a bounded
 review fan-out. The default is six specialist nodes for a broad audit; lowering
 it is recorded in the run and is preserved when the run is resumed. Results
 from a reduced run must be labeled as such because it trades coverage for cost.
+When you set no review limit explicitly, tiny workspaces (30 files and 256 KiB
+or less) auto-scale the fan-out: audits keep exactly their four required
+domain reviews and ordinary tasks keep two review nodes, with the decision and
+measurements recorded in `coverage.auto_review_scaling`. Explicit limits are
+never overridden, and saved runs keep their recorded limits on resume.
+
+Correction rounds are incremental. After a failed verification round, the next
+round re-verifies only the checks that were unsatisfied (plus any satisfied
+check whose covering surface the correction changed); the independent review
+in that round re-examines the previously flagged findings and the changed
+surfaces while keeping full independent access to the frozen workspace. The
+runner merges per-round check evaluations by id, so an earlier recorded pass
+stays valid unless a later round re-ran that check.
 
 Use `--workspace-mode live` only when in-place changes are deliberately required. Version 1 saved runs preserve their legacy live/no-supervision behavior when resumed.
 

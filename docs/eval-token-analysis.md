@@ -54,22 +54,38 @@ planner 在审查域选择上有自由度。
 
 ## 优化杠杆（按影响排序）
 
-1. **修正循环改增量复核**（对带修正的 run 影响最大）。每轮 correction 后目前整跑
+实施状态（2026-08-22，提交待引用）：
+
+1. **[已实现] 修正循环改增量复核**（对带修正的 run 影响最大）。每轮 correction 后目前整跑
    verification + independent-review。`recheck --scope` 已有"只重验未满足检查项"
    的机制，应把同样的增量思想用于 correction 循环：只重验受影响文件/检查项，
    独立复核只审 diff 而不是重读全仓库。预计每轮修正的重验成本从 ~475K 压到 <150K。
-2. **审查节点数量与输入打包**（干净跑最大头，38.7%）。55 行的小仓库跑 5 个域审查，
+   实现方式：`makeLoopNode` 为第 1 轮及以后的 verification 节点计算上一轮
+   unsatisfied 检查集（`incremental_check_ids`），prompt 与 runner 端评估都按此集合
+   作用域化；independent review 节点的 focus 收窄为上一轮被拒的发现与修正涉及面，
+   同时保留对冻结仓库的完整独立访问；runner 在最终汇总时按 check id 跨轮合并
+   `machine_check_evaluation`，早轮已记录的通过项保持有效，晚轮重跑的结果覆盖同 id。
+2. **[已实现] 审查节点数量与输入打包**（干净跑最大头，38.7%）。55 行的小仓库跑 5 个域审查，
    每个节点都在重复翻同一批文件。`--max-review-nodes` 应按 workspace 规模自动收缩
    （小仓库合并为 2-3 个综合审查节点，四个必需域仍要覆盖）；同时把 discovery 的
    发现清单和相关文件内容直接打包进审查输入，减少 agent 自行翻找的工循环。
    预计 744K → ~450K。
-3. **独立复核输入瘦身**。independent-review 的 input.md 是全量 transcript
+   实现方式：`effectiveReviewLimits` 用有界只读目录遍历测量 workspace 规模
+   （≤30 文件且 ≤256KB 判为小型），仅在用户未显式固定 `--max-review-nodes(-per-wave)`
+   /`--max-total-review-nodes` 时收缩；audit 模式的下限是四个必需域
+   （engineering/product/experience/security），task 模式下限 2；决策与测量值记录在
+   `coverage.auto_review_scaling` 并随 run 持久化，resume 与旧 run 不受影响。
+   输入打包（discovery 结果直接嵌入审查 prompt）尚未实现，留待下一批。
+3. **[未实现] 独立复核输入瘦身**。independent-review 的 input.md 是全量 transcript
    （123KB）。复核需要独立的仓库访问权，但不需要冗长历史：输入只给变更清单 + diff，
    让它自己在冻结仓库里验证。预计每轮 300K → ~150K；四轮制下最多省 ~600K。
-4. **supervision 节点的缓存前缀修复**。planner-supervision 与
-   implementation-supervision 的 cached_input_tokens 为 0（其它节点 70% 命中）。
-   把系统提示和共享上下文做成稳定前缀、变化内容放尾部，可白拿约 30K/节点。
-5. **discovery 输出结构化**。discovery 的 20 倍输入放大说明它在反复定位文件。
+4. **[已评估，暂缓] supervision 节点的缓存前缀修复**。planner-supervision 与
+   implementation-supervision 的 cached_input_tokens 为 0。分析后确认这不是前缀
+   排列问题：缓存命中主要来自同一节点内多轮工循环的会话前缀复用，而 supervision
+   节点被明确禁止调用工具（单轮请求），结构上无法产生多轮前缀；跨进程的服务端
+   前缀缓存能否命中无法在本仓内验证。重排 prompt 把稳定内容前置收益不可证，
+   且会削弱节点身份声明的位置，故暂缓。
+5. **[未实现] discovery 输出结构化**。discovery 的 20 倍输入放大说明它在反复定位文件。
    给 discovery 的 prompt 附带仓库地图（文件清单 + 入口点摘要）可显著降低翻找成本。
 
 ## 量化预期

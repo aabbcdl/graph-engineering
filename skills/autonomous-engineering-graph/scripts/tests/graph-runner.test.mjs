@@ -9160,3 +9160,396 @@ test(
     assert.equal(run.options.user_approved, true);
   },
 );
+
+async function statOrNull(target) {
+  try {
+    return await lstat(target);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    return null;
+  }
+}
+
+test("preview reports the v3 contract without creating a Run or state residue", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const stateRoot = path.join(root, "state");
+  await mkdir(workspace, { recursive: true });
+
+  const previewed = spawnSync(
+    process.execPath,
+    [RUNNER, "preview", "--workspace", workspace, "--goal", "Audit the repository", "--state-root", stateRoot, "--json"],
+    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+  );
+  assert.equal(previewed.status, 0, previewed.stderr || previewed.stdout);
+  const output = JSON.parse(previewed.stdout.trim());
+  assert.equal(output.status, "preview");
+  assert.equal(output.creates_run, false);
+  assert.equal(output.creates_workspace, false);
+  assert.equal(output.creates_state, false);
+  assert.equal(output.plan.mode, "task");
+  assert.equal(output.plan.review_limit_per_wave, 6);
+  assert.ok(Array.isArray(output.plan.required_checks));
+  assert.ok(Array.isArray(output.capabilities));
+  assert.deepEqual(output.capabilities.map((entry) => entry.backend).sort(), ["claude", "codex"]);
+  for (const entry of output.capabilities) {
+    assert.ok(entry.installed && entry.invocable && entry["read-sandbox-verified"] && entry["write-sandbox-verified"]);
+  }
+  assert.equal(output.assurance.level, "standard");
+  assert.equal(output.budget.profile, "default");
+  assert.equal(output.budget.max_tokens, 6_000_000);
+  assert.ok(output.preflight.environment_keys.length > 0);
+  assert.equal(await statOrNull(stateRoot), null);
+
+  const missingGoal = spawnSync(
+    process.execPath,
+    [RUNNER, "preview", "--workspace", workspace, "--state-root", stateRoot, "--json"],
+    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+  );
+  assert.equal(missingGoal.status, 1);
+  assert.match(missingGoal.stderr, /preview requires --goal/);
+  assert.equal(await statOrNull(stateRoot), null);
+});
+
+test("runs lists saved runs with recovery flags and usage", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const otherWorkspace = path.join(root, "other-workspace");
+  const stateRoot = path.join(root, "state");
+  await mkdir(workspace, { recursive: true });
+  await mkdir(otherWorkspace, { recursive: true });
+  const bucket = workspaceBucket(stateRoot, workspace);
+  for (const [runId, status] of [["run-open", "blocked"], ["run-done", "completed"]]) {
+    const directory = path.join(bucket, runId);
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      path.join(directory, "run.json"),
+      `${JSON.stringify({ run_id: runId, workspace, status, created_at: "2026-08-20T00:00:00.000Z" })}\n`,
+      "utf8",
+    );
+  }
+
+  const listed = spawnSync(
+    process.execPath,
+    [RUNNER, "runs", "--state-root", stateRoot, "--json"],
+    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+  );
+  assert.equal(listed.status, 0, listed.stderr || listed.stdout);
+  const output = JSON.parse(listed.stdout.trim());
+  assert.equal(output.state_root, path.resolve(stateRoot));
+  assert.ok(Number.isFinite(output.usage.bytes));
+  const byId = new Map(output.runs.map((entry) => [entry.run.run_id, entry]));
+  assert.equal(byId.get("run-open").recoverable, true);
+  assert.equal(byId.get("run-open").run.status, "blocked");
+  assert.equal(byId.get("run-done").recoverable, false);
+  assert.ok(byId.get("run-done").size_bytes >= 0);
+
+  const filtered = spawnSync(
+    process.execPath,
+    [RUNNER, "runs", "--workspace", otherWorkspace, "--state-root", stateRoot, "--json"],
+    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+  );
+  assert.equal(filtered.status, 0, filtered.stderr || filtered.stdout);
+  assert.equal(JSON.parse(filtered.stdout.trim()).runs.length, 0);
+});
+
+test("diff summarizes added, modified, deleted, and mode-only changes", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const stateRoot = path.join(root, "state");
+  const runDir = path.join(workspaceBucket(stateRoot, workspace), "diff-run");
+  const resultDir = path.join(runDir, "results");
+  await mkdir(resultDir, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await writeFile(
+    path.join(runDir, "run.json"),
+    `${JSON.stringify({ run_id: "diff-run", workspace, status: "completed", created_at: "2026-08-20T00:00:00.000Z" })}\n`,
+    "utf8",
+  );
+  await writeFile(path.join(resultDir, "metadata.json"), `${JSON.stringify({
+    version: 1,
+    run_id: "diff-run",
+    terminal_status: "completed",
+    verification_passed: true,
+    independent_review_passed: true,
+    eligible_to_apply: true,
+    source_workspace: workspace,
+    changed_files: ["added.txt", "modified.txt", "gone.txt", "perm.txt"],
+    source_records: {
+      "modified.txt": { kind: "file", sha256: contentHash("old"), mode: defaultFileMode },
+      "gone.txt": { kind: "file", sha256: contentHash("gone"), mode: defaultFileMode },
+      "perm.txt": { kind: "file", sha256: contentHash("same"), mode: 0o644 },
+    },
+    result_records: {
+      "added.txt": { kind: "file", sha256: contentHash("added"), mode: defaultFileMode },
+      "modified.txt": { kind: "file", sha256: contentHash("new"), mode: defaultFileMode },
+      "perm.txt": { kind: "file", sha256: contentHash("same"), mode: 0o755 },
+    },
+  })}\n`, "utf8");
+
+  const diffed = spawnSync(
+    process.execPath,
+    [RUNNER, "diff", "--workspace", workspace, "--state-root", stateRoot, "--run", "diff-run", "--json"],
+    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+  );
+  assert.equal(diffed.status, 0, diffed.stderr || diffed.stdout);
+  const output = JSON.parse(diffed.stdout.trim());
+  assert.equal(output.run_id, "diff-run");
+  assert.equal(output.eligible_to_apply, true);
+  assert.deepEqual(output.additions, ["added.txt"]);
+  assert.deepEqual(output.modifications, ["modified.txt"]);
+  assert.deepEqual(output.deletions, ["gone.txt"]);
+  assert.deepEqual(output.mode_only, ["perm.txt"]);
+
+  const missingRun = spawnSync(
+    process.execPath,
+    [RUNNER, "diff", "--workspace", workspace, "--state-root", stateRoot, "--json"],
+    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+  );
+  assert.equal(missingRun.status, 1);
+  assert.match(missingRun.stderr, /diff requires --run/);
+});
+
+test("apply dry-run checks eligibility and conflicts without writing", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const runDir = path.join(root, "run");
+  const resultDir = path.join(runDir, "results");
+  const filesRoot = path.join(resultDir, "files");
+  await mkdir(filesRoot, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(workspace, "first.txt"), "first source\n", "utf8");
+  await writeFile(path.join(filesRoot, "first.txt"), "first result\n", "utf8");
+  await writeFile(
+    path.join(resultDir, "metadata.json"),
+    `${JSON.stringify({
+      version: 1,
+      run_id: "dry-run-result",
+      terminal_status: "completed",
+      verification_passed: true,
+      independent_review_passed: true,
+      eligible_to_apply: true,
+      source_workspace: workspace,
+      changed_files: ["first.txt"],
+      source_records: { "first.txt": { kind: "file", sha256: contentHash("first source\n"), mode: defaultFileMode } },
+      result_records: { "first.txt": { kind: "file", sha256: contentHash("first result\n"), mode: defaultFileMode } },
+    })}\n`,
+    "utf8",
+  );
+  await writeFile(path.join(runDir, "completion.json"), `${JSON.stringify({
+    run_id: "dry-run-result",
+    status: "completed",
+    machine_check_evaluation: { application_pass: true },
+    independent_review: { status: "completed", gate: "pass" },
+  })}\n`, "utf8");
+
+  const checked = await applyResults({ resultDir, workspace, dryRun: true });
+  assert.equal(checked.status, "dry-run");
+  assert.deepEqual(checked.files_checked, ["first.txt"]);
+  assert.equal(checked.writes, 0);
+  assert.equal(await readFile(path.join(workspace, "first.txt"), "utf8"), "first source\n");
+
+  await writeFile(path.join(workspace, "first.txt"), "conflicting edit\n", "utf8");
+  await assert.rejects(applyResults({ resultDir, workspace, dryRun: true }), /changed since Graph started/);
+  assert.equal(await readFile(path.join(workspace, "first.txt"), "utf8"), "conflicting edit\n");
+});
+
+test("apply --file applies one manifest path selectively and records a partial application", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const stateRoot = path.join(root, "state");
+  const runDir = path.join(workspaceBucket(stateRoot, workspace), "selective-run");
+  const resultDir = path.join(runDir, "results");
+  const filesRoot = path.join(resultDir, "files");
+  await mkdir(filesRoot, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(workspace, "first.txt"), "first source\n", "utf8");
+  await writeFile(path.join(workspace, "second.txt"), "second source\n", "utf8");
+  await writeFile(path.join(filesRoot, "first.txt"), "first result\n", "utf8");
+  await writeFile(path.join(filesRoot, "second.txt"), "second result\n", "utf8");
+  await writeFile(
+    path.join(runDir, "run.json"),
+    `${JSON.stringify({ run_id: "selective-run", workspace, status: "completed", created_at: "2026-08-20T00:00:00.000Z" })}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(resultDir, "metadata.json"),
+    `${JSON.stringify({
+      version: 1,
+      run_id: "selective-run",
+      terminal_status: "completed",
+      verification_passed: true,
+      independent_review_passed: true,
+      eligible_to_apply: true,
+      source_workspace: workspace,
+      changed_files: ["first.txt", "second.txt"],
+      source_records: {
+        "first.txt": { kind: "file", sha256: contentHash("first source\n"), mode: defaultFileMode },
+        "second.txt": { kind: "file", sha256: contentHash("second source\n"), mode: defaultFileMode },
+      },
+      result_records: {
+        "first.txt": { kind: "file", sha256: contentHash("first result\n"), mode: defaultFileMode },
+        "second.txt": { kind: "file", sha256: contentHash("second result\n"), mode: defaultFileMode },
+      },
+    })}\n`,
+    "utf8",
+  );
+  await writeFile(path.join(runDir, "completion.json"), `${JSON.stringify({
+    run_id: "selective-run",
+    status: "completed",
+    machine_check_evaluation: { application_pass: true },
+    independent_review: { status: "completed", gate: "pass" },
+  })}\n`, "utf8");
+
+  const dryRun = spawnSync(
+    process.execPath,
+    [RUNNER, "apply", "--workspace", workspace, "--state-root", stateRoot, "--run", "selective-run", "--file", "first.txt", "--dry-run", "--json"],
+    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+  );
+  assert.equal(dryRun.status, 0, dryRun.stderr || dryRun.stdout);
+  assert.equal(JSON.parse(dryRun.stdout.trim()).status, "dry-run");
+  assert.equal(await readFile(path.join(workspace, "first.txt"), "utf8"), "first source\n");
+  assert.equal(JSON.parse(await readFile(path.join(runDir, "run.json"), "utf8")).application, undefined);
+
+  const applied = spawnSync(
+    process.execPath,
+    [RUNNER, "apply", "--workspace", workspace, "--state-root", stateRoot, "--run", "selective-run", "--file", "first.txt", "--json"],
+    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+  );
+  assert.equal(applied.status, 0, applied.stderr || applied.stdout);
+  assert.equal(JSON.parse(applied.stdout.trim()).files_applied.length, 1);
+  assert.equal(await readFile(path.join(workspace, "first.txt"), "utf8"), "first result\n");
+  assert.equal(await readFile(path.join(workspace, "second.txt"), "utf8"), "second source\n");
+  const savedRun = JSON.parse(await readFile(path.join(runDir, "run.json"), "utf8"));
+  assert.equal(savedRun.application.status, "partial_application");
+  assert.deepEqual(savedRun.application.files, ["first.txt"]);
+  const events = await readFile(path.join(runDir, "events", "events.jsonl"), "utf8");
+  assert.match(events, /RunPartiallyApplied/);
+
+  const unknownFile = spawnSync(
+    process.execPath,
+    [RUNNER, "apply", "--workspace", workspace, "--state-root", stateRoot, "--run", "selective-run", "--file", "not-in-manifest.txt", "--dry-run", "--json"],
+    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+  );
+  assert.equal(unknownFile.status, 1);
+  assert.match(unknownFile.stderr, /not in the Run manifest/);
+});
+
+test("recheck guards refuse invalid scopes, unfinished runs, and drifted results", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const stateRoot = path.join(root, "state");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(workspace, "tracked.txt"), "unchanged\n", "utf8");
+
+  async function recheckSpawn(runId, extraArgs) {
+    return spawnSync(
+      process.execPath,
+      [RUNNER, "recheck", "--workspace", workspace, "--state-root", stateRoot, "--run", runId, ...extraArgs],
+      { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+    );
+  }
+  async function writeGuardRun(runId, { status = "completed", nodes = null, metadata = null, afterManifest = true } = {}) {
+    const runDir = path.join(workspaceBucket(stateRoot, workspace), runId);
+    await mkdir(path.join(runDir, "results"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "run.json"),
+      `${JSON.stringify({
+        run_id: runId,
+        workspace,
+        status,
+        created_at: "2026-08-20T00:00:00.000Z",
+        ...(nodes ? { nodes } : {}),
+        plan: { required_checks: [{ id: "apply-check", command: ["node", "-e", ""], blocking_scope: "apply" }] },
+      })}\n`,
+      "utf8",
+    );
+    if (metadata) {
+      await writeFile(
+        path.join(runDir, "results", "metadata.json"),
+        `${JSON.stringify({ version: 1, run_id: runId, terminal_status: "completed", ...metadata })}\n`,
+        "utf8",
+      );
+    }
+    if (afterManifest) {
+      await writeFile(path.join(runDir, "workspace-after.json"), `${JSON.stringify(await captureWorkspaceManifest(workspace))}\n`, "utf8");
+    }
+    return runDir;
+  }
+
+  const reviewPassed = { independent_review: { kind: "independent_review", status: "completed", gate: "pass" } };
+
+  await writeGuardRun("guard-scope", { nodes: reviewPassed, metadata: {}, afterManifest: false });
+  const badScope = await recheckSpawn("guard-scope", ["--scope", "both", "--json"]);
+  assert.equal(badScope.status, 1);
+  assert.match(badScope.stderr, /recheck scope must be apply or release/);
+
+  await writeGuardRun("guard-status", { status: "completed_with_gaps", nodes: reviewPassed, metadata: {}, afterManifest: false });
+  const notCompleted = await recheckSpawn("guard-status", ["--scope", "apply", "--json"]);
+  assert.equal(notCompleted.status, 1);
+  assert.match(notCompleted.stderr, /recheck requires a completed Run/);
+
+  await writeGuardRun("guard-review", { metadata: {}, afterManifest: false });
+  const missingReview = await recheckSpawn("guard-review", ["--scope", "apply", "--json"]);
+  assert.equal(missingReview.status, 1);
+  assert.match(missingReview.stderr, /original independent review to have passed/);
+
+  await writeGuardRun("guard-metadata", { nodes: reviewPassed, afterManifest: false });
+  const missingMetadata = await recheckSpawn("guard-metadata", ["--scope", "apply", "--json"]);
+  assert.equal(missingMetadata.status, 1);
+  assert.match(missingMetadata.stderr, /frozen result metadata/);
+
+  await writeGuardRun("guard-drift", { nodes: reviewPassed, metadata: {} });
+  await writeFile(path.join(workspace, "tracked.txt"), "drifted\n", "utf8");
+  const drifted = await recheckSpawn("guard-drift", ["--scope", "apply", "--json"]);
+  assert.equal(drifted.status, 1);
+  assert.match(drifted.stderr, /Frozen Run result changed/);
+});
+
+test("recheck returns already-satisfied without starting a model process", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const stateRoot = path.join(root, "state");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(workspace, "tracked.txt"), "unchanged\n", "utf8");
+  const runDir = path.join(workspaceBucket(stateRoot, workspace), "satisfied-run");
+  await mkdir(path.join(runDir, "results"), { recursive: true });
+  await writeFile(
+    path.join(runDir, "run.json"),
+    `${JSON.stringify({
+      run_id: "satisfied-run",
+      workspace,
+      status: "completed",
+      created_at: "2026-08-20T00:00:00.000Z",
+      nodes: { independent_review: { kind: "independent_review", status: "completed", gate: "pass" } },
+      plan: {
+        required_checks: [
+          { id: "apply-check", command: ["node", "-e", ""], blocking_scope: "apply" },
+          { id: "release-check", command: ["node", "-e", ""], blocking_scope: "release" },
+        ],
+      },
+      machine_check_evaluation: { checks: [{ id: "apply-check", status: "pass" }] },
+    })}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(runDir, "results", "metadata.json"),
+    `${JSON.stringify({ version: 1, run_id: "satisfied-run", terminal_status: "completed", eligible_to_apply: true })}\n`,
+    "utf8",
+  );
+  await writeFile(path.join(runDir, "workspace-after.json"), `${JSON.stringify(await captureWorkspaceManifest(workspace))}\n`, "utf8");
+
+  const rechecked = spawnSync(
+    process.execPath,
+    [RUNNER, "recheck", "--workspace", workspace, "--state-root", stateRoot, "--run", "satisfied-run", "--scope", "apply", "--json"],
+    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+  );
+  assert.equal(rechecked.status, 0, rechecked.stderr || rechecked.stdout);
+  const output = JSON.parse(rechecked.stdout.trim());
+  assert.equal(output.status, "already-satisfied");
+  assert.equal(output.scope, "apply");
+  assert.deepEqual(output.checks, []);
+  assert.equal(output.writes, 0);
+  const savedRun = JSON.parse(await readFile(path.join(runDir, "run.json"), "utf8"));
+  assert.equal(savedRun.rechecks, undefined);
+});

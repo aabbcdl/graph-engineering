@@ -4,7 +4,7 @@
 Implement the approved Graph Engineering hardening plan while preserving the existing dirty worktree, v1/v2 run readability, isolated execution, transactional apply, and explicit no-Graph-self-modification boundary.
 
 ## Current Phase
-Phase 2 - control-plane operations, assurance, and backend capability reporting
+Completed - all five phases delivered; final verification green
 
 ## Phases
 
@@ -17,26 +17,26 @@ Phase 2 - control-plane operations, assurance, and backend capability reporting
 
 ### Phase 2: CLI operations and review controls
 - [x] Add total review cap and deprecated compatibility alias
-- [x] Add preview, diff, apply dry-run/selective apply, and recheck (initial implementation exists; contract tests pending)
-- [ ] Add backend capability matrix and assurance reporting
-- **Status:** in_progress
+- [x] Add preview, diff, apply dry-run/selective apply, and recheck (contract tests cover preview residue/shape, runs listing, diff classification, dry-run conflict checks, selective `--file` application with `partial_application` recording, and recheck guard rails plus the `already-satisfied` fast path)
+- [x] Add backend capability matrix and assurance reporting (exposed through `preview`; assurance gates enforced in run outcome)
+- **Status:** completed
 
 ### Phase 3: Scope and ecosystem preflight
-- [ ] Add repository-root versus requested-scope model
-- [ ] Add Node, Python, Go, Rust, Java, and .NET adapter registry
-- **Status:** pending
+- [x] Add repository-root versus requested-scope model
+- [x] Add Node, Python, Go, Rust, Java, and .NET adapter registry
+- **Status:** completed
 
 ### Phase 4: Durable control plane details
-- [ ] Add Run listing, soft quota, and explicit GC
-- [ ] Add event head and sparse index
-- [ ] Align restore with mode/kind/link manifest checks
-- **Status:** pending
+- [x] Add Run listing, soft quota, and explicit GC
+- [x] Add event head and sparse index
+- [x] Align restore with mode/kind/link manifest checks
+- **Status:** completed
 
 ### Phase 5: Release assurance
-- [ ] Add package allowlist and tarball smoke checks
-- [ ] Add protected Windows real-agent smoke workflow
-- [ ] Update docs and run all required verification
-- **Status:** pending
+- [x] Add package allowlist and tarball smoke checks
+- [x] Add protected Windows real-agent smoke workflow
+- [x] Update docs and run all required verification
+- **Status:** completed
 
 ## Decisions
 
@@ -56,7 +56,7 @@ Phase 2 - control-plane operations, assurance, and backend capability reporting
 
 ## Baseline
 
-- Branch: `master`
-- Existing dirty changes: preserved; no reset/checkout/clean performed.
-- Baseline `npm test`: exit 1, 240 tests, 232 passed, 8 failed under the new strict/partial semantics; all 8 are now covered by targeted corrections or updated assertions.
-- Baseline `npm run test:eval` and `npm run validate`: pending capture.
+- Branch: `main` (pushed to https://github.com/aabbcdl/graph-engineering)
+- Existing dirty changes: preserved; no reset/checkout/clean performed. The accumulated v0.3 work was committed in `92e3b59` after explicit owner approval.
+- Baseline `npm test`: exit 1, 240 tests, 232 passed, 8 failed under the new strict/partial semantics; all 8 were resolved by targeted corrections or updated assertions.
+- Final `npm test`: 255/255 (248 before the seven new CLI contract tests), `npm run test:eval` 10/10, `npm run validate` 72 checks.

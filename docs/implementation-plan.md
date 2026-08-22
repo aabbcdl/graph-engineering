@@ -82,6 +82,8 @@
 - `completed_with_gaps`、`waiting_environment` 和部分结果已进入报告与 completion artifact。
 - watcher 已显示工作项计数、队列、健康状态和阻塞建议。
 - `graph-engineering events` 已提供无模型、只读的事件流读取入口。
+- `preview`、`diff`、`apply`（含 `--dry-run` 与选择性 `--file`）、`recheck`、`runs`、`gc` 六个控制面操作已实现并有 CLI 契约测试覆盖（只读性、无状态残留、变更分类、冲突检查、部分应用记录、recheck 守卫与 `already-satisfied` 快路径）。
+- 15 项改进计划五个阶段全部交付；`npm test`（255）、`npm run test:eval`（10）、`npm run validate`（72 项检查）全部通过。
 - 本计划、设计说明、架构说明和使用说明已同步描述同一状态语义。
 
 ## 明确不在本次自动化范围内

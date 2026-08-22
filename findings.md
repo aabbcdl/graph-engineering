@@ -1,16 +1,15 @@
 # Findings and decisions
 
-## Current repository evidence
+## Current repository evidence (verified 2026-08-22)
 
-- Main runner: `skills/autonomous-engineering-graph/scripts/graph-runner.mjs`.
-- Runtime modules already exist for state, event log, summaries, artifact storage, and evidence verification.
-- `runtime/evidence-verifier.mjs` currently accepts bidirectional substring matches.
-- `runtime/state-model.mjs` does not include required audit-domain completion in `deriveRunOutcome()`.
-- `runtime/event-log.mjs` reads the complete `events.jsonl` before every append and read.
-- `workspace-preflight.mjs` currently implements Node package-manager preparation only.
-- `restore-run.mjs` does not compare or restore mode-only changes.
-- `apply-results.mjs` already provides transactional apply, conflict checks, and rollback.
-- The worktree contains extensive user-owned uncommitted changes. All implementation must layer on top of them.
+- Main runner: `skills/autonomous-engineering-graph/scripts/graph-runner.mjs` (still the orchestration monolith; `runtime/` extraction is the next structural step).
+- `runtime/evidence-verifier.mjs` now requires exact normalized argv matching and rejects fabricated `check_id` claims.
+- `runtime/state-model.mjs` includes audit-domain completion, assurance, and budget gates in `deriveRunOutcome()`.
+- `runtime/event-log.mjs` maintains a sparse head/index and lazily rebuilds legacy metadata.
+- `workspace-preflight.mjs` covers Node, Python, Go, Rust, Java, and .NET lock inputs.
+- `restore-run.mjs` restores mode, kind, and link-target differences.
+- `apply-results.mjs` provides transactional apply, conflict checks, rollback, dry-run, and selective `--file` application.
+- The v0.3 work is committed on `origin/main` (`92e3b59`); the working tree is clean apart from tracked status-file updates.
 
 ## Approved public decisions
 
@@ -27,9 +26,6 @@
 - Existing result-package and recovery-package copies must remain self-contained.
 - Current tests may already contain partial fixes; each task must be revalidated against current code.
 
-## 2026-08-22 baseline diagnosis in progress
+## 2026-08-22 baseline diagnosis (closed)
 
-- The current full suite has 8 failures after the persisted P1 changes. Two are directly stale assertions for the newly approved strict command contract.
-- Six lifecycle fixtures return `completed_with_gaps` with exit code `2` although their default fake planner uses `mode: task`; inspect the persisted run budget and assurance snapshots before deciding whether the fixture or runner is wrong.
-- Do not relax the new outcome gates to restore old fixture expectations. The fixture must provide evidence that the new public contract requires, or the test must assert the intended partial outcome.
-- A retained `recorded-blocker` Run has `budget.pass=true`, `usage_complete=true`, `required_domains_complete=true`, and a single blocked review work item; its partial outcome is therefore caused by the intended blocked-item rule, not the budget controller.
+- The eight failures recorded on 2026-08-21 were resolved: two were stale assertions under the strict command contract, and six lifecycle fixtures were asserting the old full-success outcome where `completed_with_gaps` (exit 2) is the intended blocked-item semantics. The full suite passed 248/248 before the CLI contract tests were added, and no outcome gate was relaxed.

@@ -27,12 +27,21 @@ Every evaluation records a `harness` fingerprint block in `pairs.json` and `scor
 - `revision`: the repository Git HEAD at run time;
 - `runner_sha256`, `runtime_sha256`, `evals_lib_sha256`, `adapters_sha256`: content hashes of the execution code;
 - `manifest_sha256`: the exact evaluation manifest;
+- each fixture may declare `truth_sha256`; when present, the runner verifies
+  the canonical parsed truth content before launching either arm and records the
+  observed hash in every score input;
 - `graph_run_version_expected`: the Run schema version the harness requires (currently 3);
 - `environment`: Node version, platform, and architecture.
 
 The runner persists this block in `harness.json`, passes it to both arms through `--harness-file`, and each adapter recomputes and self-reports what it actually executed through `harness_identity`. The scorer requires every fingerprint field to match the launch record, requires the two arms to agree, and requires the Graph arm's actual Run schema version and persisted token/time budgets to match the declaration.
 
 `harness_binding` is `bound` only for a complete, valid fingerprint, `missing` when no launch fingerprint exists, and `invalid` for a malformed or incomplete fingerprint. Only `bound` data can become `claim_ready`; the other states are descriptive history. Evaluations produced by older protocol versions (for example the August 2026 v2 Run pilots) therefore cannot be merged into new comparable sets.
+
+The truth hash is computed from a recursively key-sorted canonical JSON
+representation of the parsed value, followed by one trailing newline. Arrays
+retain their original order, so formatting-only whitespace changes do not
+silently create a new truth version. A declared hash mismatch fails before an
+arm process starts. The scorer repeats the check on `score-input.json`.
 
 Claim-ready evaluation requires the harness itself to run from a Git checkout with a resolvable HEAD. A package-only installation cannot supply that revision and is deliberately fail-closed as descriptive history rather than producing a version-unbound claim.
 
@@ -43,6 +52,11 @@ Rejected pairs are classified as `infrastructure` (the measurement itself failed
 Each fixture is a repository snapshot plus a hidden truth file containing seeded defect IDs and acceptance criteria. The harness hashes the source, creates one frozen copy, gives Graph and baseline independent working copies, and verifies the frozen copy remains unchanged.
 
 `pairs.json` is written during execution without hidden truth. After all arms finish, the harness writes `score-input.json` containing truth for the deterministic scorer. Adapters are trusted local code and must never pass the truth file or scoring input to an agent process.
+
+Natural-language findings are eligible for truth mapping only when the arm marks
+them `validated: true`; an unvalidated hypothesis does not contribute to
+recall or precision. Hidden acceptance may independently verify a repair even
+when an arm did not report the finding.
 
 ## Adapter Contract
 

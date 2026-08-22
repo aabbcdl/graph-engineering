@@ -60,3 +60,22 @@ Completed - all five phases delivered; final verification green
 - Existing dirty changes: preserved; no reset/checkout/clean performed. The accumulated v0.3 work was committed in `92e3b59` after explicit owner approval.
 - Baseline `npm test`: exit 1, 240 tests, 232 passed, 8 failed under the new strict/partial semantics; all 8 were resolved by targeted corrections or updated assertions.
 - Final `npm test`: 255/255 (248 before the seven new CLI contract tests), `npm run test:eval` 10/10, `npm run validate` 72 checks.
+
+## Jobqueue fixture phase (2026-08-22)
+
+- [x] Freeze the Go fixture contract, module layout, and 23-defect category quota
+- [x] Implement the clean public behavior and passing public test baseline (`go test ./...` and `go build ./...` pass with the SHA-checked local toolchain)
+- [x] Seed the frozen cross-module defects without breaking public tests
+- [x] Add hidden truth/evaluator, real-fixture coverage, and a pilot manifest
+- [x] Run Go checks with the local SHA-checked toolchain
+- [x] Run JavaScript harness/package regression and review the complete fixture diff
+- [x] Require `validated: true` before mapping natural-language claims to truth defects
+- [x] Validate newline-delimited Go hidden-test observations and guard against parser false negatives
+
+### Jobqueue scope decisions
+
+- Language: Go, standard library only; no new runtime dependency in Graph itself.
+- Shape: one `go.mod`, eight packages/modules, approximately 2,000-3,000 source lines, 23 seeded defects.
+- Public checks: `go build ./...` and `go test ./...` are the fixture contract.
+- Truth is frozen before any real arm run and is never changed based on arm outcomes.
+- Local verification uses the SHA-256-checked, ignored toolchain at `.tmp/go-toolchain`; it is not a Graph runtime dependency or fixture artifact.

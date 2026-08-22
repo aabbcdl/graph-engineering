@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { adapterErrors, hashTree, runPairedEvaluation, validateManifest } from "../lib/pair-runner.mjs";
+import { adapterErrors, canonicalJsonSha256, hashTree, runPairedEvaluation, validateManifest } from "../lib/pair-runner.mjs";
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const FAKE_ARM = path.join(TEST_DIR, "fake-arm.mjs");
@@ -127,6 +127,60 @@ test("evaluation manifests require one positive shared wall-time budget", () => 
   assert.throws(() => validateManifest(manifest), /timeout_minutes must be a positive integer/);
   assert.throws(() => validateManifest({ ...manifest, timeout_minutes: 180.5 }), /timeout_minutes must be a positive integer/);
   assert.doesNotThrow(() => validateManifest({ ...manifest, timeout_minutes: 180 }));
+  assert.throws(
+    () => validateManifest({
+      ...manifest,
+      timeout_minutes: 180,
+      fixtures: [{ ...manifest.fixtures[0], truth_sha256: "not-a-sha" }],
+    }),
+    /truth_sha256 must be a SHA-256 hex string/,
+  );
+});
+
+test("truth hashing is stable across JSON whitespace and object key order", () => {
+  assert.equal(
+    canonicalJsonSha256({ b: 2, a: { d: 4, c: 3 } }),
+    canonicalJsonSha256({ a: { c: 3, d: 4 }, b: 2 }),
+  );
+});
+
+test("a declared truth hash fails closed before either arm runs", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "graph-eval-truth-"));
+  t.after(async () => {
+    const { rm } = await import("node:fs/promises");
+    await rm(root, { recursive: true, force: true });
+  });
+  const fixture = path.join(root, "fixture");
+  await mkdir(fixture);
+  await writeFile(path.join(fixture, "fixture.txt"), "frozen input\n", "utf8");
+  const truth = { defects: [{ id: "defect-1" }] };
+  await writeFile(path.join(root, "truth.json"), JSON.stringify(truth) + "\n", "utf8");
+  const manifest = {
+    version: 1,
+    model: "fixture-model",
+    reasoning_effort: "high",
+    token_budget: 1000,
+    timeout_minutes: 180,
+    fixtures: [{
+      id: "fixture",
+      snapshot: "fixture",
+      goal: "Audit fixture",
+      truth_file: "truth.json",
+      truth_sha256: "0".repeat(64),
+      repetitions: 1,
+    }],
+    arms: {
+      graph: { command: [process.execPath, FAKE_ARM] },
+      baseline: { command: [process.execPath, FAKE_ARM] },
+    },
+  };
+  const manifestPath = path.join(root, "manifest.json");
+  await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
+  await assert.rejects(
+    runPairedEvaluation({ manifestPath, outputDirectory: path.join(root, "results") }),
+    /truth SHA-256 differs from manifest/,
+  );
+  assert.notEqual(canonicalJsonSha256(truth), manifest.fixtures[0].truth_sha256);
 });
 
 test("adapter contract rejects a changed declared wall-time budget", () => {

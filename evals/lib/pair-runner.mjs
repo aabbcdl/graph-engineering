@@ -12,6 +12,28 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function canonicalJson(value) {
+  if (value === null || typeof value !== "object") {
+    const encoded = JSON.stringify(value);
+    if (encoded === undefined) throw new Error("Cannot hash undefined JSON value");
+    return encoded;
+  }
+  if (Array.isArray(value)) {
+    return "[" + value.map((item) => canonicalJson(item)).join(",") + "]";
+  }
+  return "{" + Object.keys(value).sort()
+    .map((key) => JSON.stringify(key) + ":" + canonicalJson(value[key]))
+    .join(",") + "}";
+}
+
+function canonicalJsonSha256(value) {
+  return sha256(canonicalJson(value) + "\n");
+}
+
+function sha256Hex(value) {
+  return typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
+}
+
 async function exists(target) {
   try {
     await access(target);
@@ -75,6 +97,9 @@ function validateManifest(manifest) {
     requiredString(fixture.snapshot, `fixture ${fixture.id} snapshot`);
     requiredString(fixture.goal, `fixture ${fixture.id} goal`);
     requiredString(fixture.truth_file, `fixture ${fixture.id} truth_file`);
+    if (fixture.truth_sha256 !== undefined && !sha256Hex(fixture.truth_sha256)) {
+      throw new Error("fixture " + fixture.id + " truth_sha256 must be a SHA-256 hex string");
+    }
     if (!Number.isInteger(fixture.repetitions) || fixture.repetitions <= 0) {
       throw new Error(`fixture ${fixture.id} repetitions must be a positive integer`);
     }
@@ -277,9 +302,13 @@ async function runPairedEvaluation({ manifestPath, outputDirectory }) {
   const hiddenTruth = new Map();
   for (const fixture of manifest.fixtures) {
     const truth = JSON.parse(await readFile(path.resolve(manifestDirectory, fixture.truth_file), "utf8"));
-    hiddenTruth.set(fixture.id, truth);
+    const truthSha256 = canonicalJsonSha256(truth);
+    if (fixture.truth_sha256 && fixture.truth_sha256.toLowerCase() !== truthSha256) {
+      throw new Error("Fixture " + fixture.id + " truth SHA-256 differs from manifest");
+    }
+    hiddenTruth.set(fixture.id, { truth, truth_sha256: truthSha256 });
     const frozen = await prepareFrozenFixture({ fixture, manifestDirectory, outputDirectory: resolvedOutput });
-    results.fixtures.push({ id: fixture.id, fixture_sha256: frozen.sha256 });
+    results.fixtures.push({ id: fixture.id, fixture_sha256: frozen.sha256, truth_sha256: truthSha256 });
     for (let repetition = 1; repetition <= fixture.repetitions; repetition += 1) {
       const pairDirectory = path.join(resolvedOutput, "runs", fixture.id, String(repetition).padStart(3, "0"));
       await mkdir(pairDirectory, { recursive: true });
@@ -308,7 +337,7 @@ async function runPairedEvaluation({ manifestPath, outputDirectory }) {
   }
   const scoreInput = {
     ...results,
-    fixtures: results.fixtures.map((fixture) => ({ ...fixture, truth: hiddenTruth.get(fixture.id) })),
+    fixtures: results.fixtures.map((fixture) => ({ ...fixture, truth: hiddenTruth.get(fixture.id).truth })),
   };
   const scoreInputPath = path.join(resolvedOutput, "score-input.json");
   await writeFile(scoreInputPath, `${JSON.stringify(scoreInput, null, 2)}\n`, "utf8");
@@ -320,4 +349,4 @@ async function runPairedEvaluation({ manifestPath, outputDirectory }) {
   };
 }
 
-export { adapterErrors, argumentValue, harnessIdentity, hashTree, runPairedEvaluation, validateManifest };
+export { adapterErrors, argumentValue, canonicalJsonSha256, harnessIdentity, hashTree, runPairedEvaluation, validateManifest };

@@ -3,6 +3,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { aggregatePairs, scorePair } from "./lib/scorer.mjs";
+import { canonicalJsonSha256 } from "./lib/pair-runner.mjs";
 
 function argument(name) {
   const index = process.argv.indexOf(name);
@@ -14,6 +15,12 @@ const outputPath = path.resolve(argument("--output") || "evals/results/report.js
 const minimumPairs = Number.parseInt(argument("--minimum-pairs") || "5", 10);
 const input = JSON.parse(await readFile(inputPath, "utf8"));
 const harness = input.harness || null;
+for (const fixture of input.fixtures || []) {
+  if (!fixture.truth) throw new Error("Missing hidden truth for fixture " + fixture.id);
+  if (fixture.truth_sha256 && fixture.truth_sha256 !== canonicalJsonSha256(fixture.truth)) {
+    throw new Error("Fixture " + fixture.id + " truth SHA-256 differs from score input");
+  }
+}
 const truthByFixture = new Map((input.fixtures || []).map((fixture) => [fixture.id, fixture.truth]));
 const scored = (input.pairs || []).map((pair) => {
   const truth = truthByFixture.get(pair.fixture_id);

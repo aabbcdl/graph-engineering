@@ -1,0 +1,194 @@
+{
+  "fixture_id": "jobqueue",
+  "version": 1,
+  "public_checks": [
+    "go build ./...",
+    "go test ./..."
+  ],
+  "defects": [
+    {
+      "id": "config-storage-path",
+      "severity": "medium",
+      "category": "cross_module_contract",
+      "file": "config/config.go",
+      "contract": "An explicitly configured StoragePath is used by FileStore.",
+      "acceptance": "Enqueue persists a snapshot at the caller-supplied path."
+    },
+    {
+      "id": "config-invalid-json",
+      "severity": "medium",
+      "category": "error_handling",
+      "file": "config/config.go",
+      "contract": "Invalid JSON is rejected.",
+      "acceptance": "Malformed configuration JSON returns a non-nil error."
+    },
+    {
+      "id": "events-callback-deadlock",
+      "severity": "high",
+      "category": "concurrency",
+      "file": "events/events.go",
+      "contract": "Callbacks may unsubscribe while receiving an event.",
+      "acceptance": "Publishing completes when a callback invokes its unsubscribe function."
+    },
+    {
+      "id": "queue-fifo-order",
+      "severity": "medium",
+      "category": "semantic_documentation",
+      "file": "queue/queue.go",
+      "contract": "Equal-priority jobs are FIFO.",
+      "acceptance": "The first equal-priority enqueue is dequeued first."
+    },
+    {
+      "id": "queue-priority-order",
+      "severity": "high",
+      "category": "cross_module_contract",
+      "file": "queue/queue.go",
+      "contract": "Higher priority work reaches queue consumers first.",
+      "acceptance": "A higher-priority job is dequeued before a lower-priority job."
+    },
+    {
+      "id": "queue-empty-wait",
+      "severity": "medium",
+      "category": "boundary",
+      "file": "queue/queue.go",
+      "contract": "Dequeue blocks until work, closure, or context cancellation.",
+      "acceptance": "An empty Dequeue returns the context deadline rather than ErrEmpty."
+    },
+    {
+      "id": "queue-close-wakeup",
+      "severity": "high",
+      "category": "concurrency",
+      "file": "queue/queue.go",
+      "contract": "Close wakes blocked producers.",
+      "acceptance": "A producer blocked on capacity returns ErrClosed promptly after Close."
+    },
+    {
+      "id": "retry-first-delay",
+      "severity": "medium",
+      "category": "boundary",
+      "file": "retry/retry.go",
+      "contract": "Retry index zero uses BaseDelay.",
+      "acceptance": "Delay(0) equals BaseDelay."
+    },
+    {
+      "id": "retry-attempt-limit",
+      "severity": "high",
+      "category": "boundary",
+      "file": "retry/retry.go",
+      "contract": "Retry index maxAttempts is not eligible.",
+      "acceptance": "ShouldRetry(maxAttempts, maxAttempts) is false."
+    },
+    {
+      "id": "retry-delay-cap",
+      "severity": "medium",
+      "category": "boundary",
+      "file": "retry/retry.go",
+      "contract": "Backoff never exceeds MaxDelay.",
+      "acceptance": "Large retry indexes return exactly MaxDelay."
+    },
+    {
+      "id": "store-rename-error",
+      "severity": "high",
+      "category": "error_handling",
+      "file": "store/store.go",
+      "contract": "Atomic replacement failures reach the caller.",
+      "acceptance": "Saving over an incompatible target returns an error."
+    },
+    {
+      "id": "store-corruption-error",
+      "severity": "high",
+      "category": "error_handling",
+      "file": "store/store.go",
+      "contract": "Corrupt snapshots are not treated as empty state.",
+      "acceptance": "Malformed snapshot JSON returns an error."
+    },
+    {
+      "id": "store-corrupt-read-close",
+      "severity": "medium",
+      "category": "resource_leak",
+      "file": "store/store.go",
+      "contract": "Readers are closed on failed decoding.",
+      "acceptance": "A tracked corrupt snapshot reader has Close invoked."
+    },
+    {
+      "id": "store-recovery-order",
+      "severity": "medium",
+      "category": "semantic_documentation",
+      "file": "store/store.go",
+      "contract": "Recovery preserves queue ordering.",
+      "acceptance": "Saved first/second jobs load as first/second."
+    },
+    {
+      "id": "scheduler-retry-units",
+      "severity": "high",
+      "category": "cross_module_contract",
+      "file": "scheduler/scheduler.go",
+      "contract": "Retry durations cross module boundaries without unit conversion.",
+      "acceptance": "A 100ms retry is not due after 1ms."
+    },
+    {
+      "id": "scheduler-double-start",
+      "severity": "high",
+      "category": "concurrency",
+      "file": "scheduler/scheduler.go",
+      "contract": "A scheduler has one ticker loop.",
+      "acceptance": "Second Start returns ErrStarted."
+    },
+    {
+      "id": "scheduler-ticker-stop",
+      "severity": "medium",
+      "category": "resource_leak",
+      "file": "scheduler/scheduler.go",
+      "contract": "Stop releases the ticker resource.",
+      "acceptance": "The ticker Stop method is called."
+    },
+    {
+      "id": "scheduler-location",
+      "severity": "medium",
+      "category": "semantic_documentation",
+      "file": "scheduler/scheduler.go",
+      "contract": "NextDaily retains caller location across DST.",
+      "acceptance": "NextDaily result keeps the supplied location."
+    },
+    {
+      "id": "worker-retry-after-stop",
+      "severity": "high",
+      "category": "resource_leak",
+      "file": "worker/worker.go",
+      "contract": "Cancellation prevents delayed retry enqueue.",
+      "acceptance": "No retry is enqueued after Pool.Stop."
+    },
+    {
+      "id": "worker-stop-wait",
+      "severity": "high",
+      "category": "concurrency",
+      "file": "worker/worker.go",
+      "contract": "Stop waits for outstanding retry work.",
+      "acceptance": "Stop observes the caller deadline while a retry remains outstanding."
+    },
+    {
+      "id": "api-ack-unknown",
+      "severity": "medium",
+      "category": "error_handling",
+      "file": "api/api.go",
+      "contract": "Ack rejects IDs not in flight.",
+      "acceptance": "Ack of an unknown ID returns ErrUnknownJob."
+    },
+    {
+      "id": "api-ack-event-order",
+      "severity": "medium",
+      "category": "concurrency",
+      "file": "api/api.go",
+      "contract": "Acknowledgement observers see the job in flight.",
+      "acceptance": "An acknowledgement callback observes InFlight equal to one."
+    },
+    {
+      "id": "api-stats-utilization",
+      "severity": "medium",
+      "category": "cross_module_contract",
+      "file": "api/api.go",
+      "contract": "Utilization is queued divided by capacity.",
+      "acceptance": "One queued job in capacity four reports utilization 0.25."
+    }
+  ]
+}

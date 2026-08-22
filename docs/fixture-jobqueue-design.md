@@ -1,6 +1,6 @@
 # 第二个评测 Fixture 设计方案：jobqueue（Go）
 
-状态：设计稿，未实现。实现前需 owner 确认语言与规模参数。
+状态：已实现（2026-08-22）。Go、规模、缺陷配额与实验协议按本稿冻结。
 
 ## 目标
 
@@ -23,16 +23,16 @@ booking-ledger（55 行、6 个缺陷、单文件语义）只够验证 harness �
 
 | 模块 | 职责 | 预计行数 |
 |---|---|---|
-| queue.go | FIFO 任务队列、优先级 | ~350 |
-| worker.go | worker 池、优雅关闭 | ~350 |
-| retry.go | 指数退避重试策略 | ~250 |
-| store.go | JSONL 文件持久化、恢复 | ~400 |
-| scheduler.go | 周期调度、时区处理 | ~400 |
-| api.go | 公共 API（Enqueue/Dequeue/Ack/Stats） | ~250 |
-| events.go | 事件钩子、观察者 | ~200 |
-| config.go | 配置解析与校验 | ~200 |
+| queue | FIFO 任务队列、优先级、批量与维护操作 | ~400 |
+| worker | worker 池、优雅关闭、指标 | ~450 |
+| retry | 指数退避、错误分类 | ~300 |
+| store | JSON snapshot、JSONL journal、恢复 | ~500 |
+| scheduler | 周期调度、时区处理、recurring calendar | ~500 |
+| api | 公共 API（Enqueue/Dequeue/Ack/Stats）与操作面 | ~350 |
+| events | 事件钩子、观察者、事件 recorder | ~300 |
+| config | 配置解析、环境覆盖与校验 | ~250 |
 
-公共测试 `jobqueue_test.go` 约 600 行，全部通过；缺陷均为公共测试未覆盖的行为偏离。
+公共 package tests 覆盖正常 API 行为并全部通过；缺陷均为公共测试未覆盖的行为偏离。
 
 ## 缺陷分布（20+ 个，类别先于具体内容冻结）
 
@@ -54,7 +54,9 @@ booking-ledger（55 行、6 个缺陷、单文件语义）只够验证 harness �
   行为描述、验收证据（修复后应满足的可观察行为）；
 - `evals/fixtures/jobqueue.evaluator.mjs`：沿用 booking-ledger 的评分契约，
   按 `defect_id` + 文件证据把 agent 发现映射到 truth；
-- truth 在首次 baseline 运行前写入并冻结；冻结后不得因任何一臂的表现修改。
+- truth 在首次 baseline 运行前写入并冻结；pilot manifest 声明
+  `truth_sha256`，pair-runner 在启动 arm 前验证，冻结后不得因任何一臂的
+  表现修改 truth。
 
 ## 冻结与实验协议
 
@@ -70,3 +72,13 @@ booking-ledger（55 行、6 个缺陷、单文件语义）只够验证 harness �
   real-fixture 测试覆盖（参照 booking-ledger 模式）；
 - 公共测试在 seed 全部缺陷后仍 100% 通过；
 - truth 缺陷数 ≥20 且类别配额符合上表。
+
+当前实现证据：
+
+- `evals/fixtures/jobqueue`：18 个 Go 源文件、2,235 行源码；
+- `go build ./...` 与 `go test ./...`：使用 SHA-256 校验的 Go 1.27.0
+  toolchain 通过；
+- `evals/tests/real-fixture.test.mjs`：验证 23 个隐藏验收、六类配额、无
+  fixture 残留和自然语言 finding 映射；
+- frozen truth canonical SHA-256：
+  `5742cd408da425421868fa5d9a70e9ee827d7ff9bfe57cd807d574c0ffa76232`。

@@ -56,6 +56,22 @@
 - Workspace file map: `workspaceFileMap` (bounded: 200 entries / 12KiB, skips .git/node_modules/build dirs) is injected into discovery and review prompts to front-load orientation and cut tool-loop re-listing.
 - Tests: unit coverage for both (reviewer context shape vs unchanged correction context; map bounds and directory skipping).
 
+### 2026-08-22 jobqueue fixture implementation
+
+- **Status:** completed; repository-wide regression and diff review passed.
+- Revalidated `docs/fixture-jobqueue-design.md`; implementation scope is Go, eight packages, 23 defects, standard library only.
+- The missing host `go` was resolved without system installation: an official, SHA-256-verified Go 1.27.0 archive was extracted under ignored `.tmp/go-toolchain`. Future fixture checks use its absolute `go.exe` path explicitly.
+- Added the fixture contract (`README.md`, `docs/contract.md`, `AGENTS.md`, `go.mod`) and public package tests before source implementation. Valid RED: `go test ./...` failed due to the intentionally absent package implementations. A first invocation used a fixture-relative toolchain path and failed before the test compiler ran; this was corrected and is not counted as TDD evidence.
+- Implemented the clean standard-library baseline across `config`, `events`, `queue`, `retry`, `store`, `worker`, `scheduler`, `api`, and `cmd/jobqueue-demo`. Baseline GREEN: `go test ./...` and `go build ./...` both passed using `D:/project/graph-engineering/.tmp/go-toolchain/bin/go.exe`.
+- Seeded all 23 frozen defects while keeping public Go checks green; hidden evaluator reports 23/23 unrepaired on the seeded snapshot.
+- Added `evals/fixtures/jobqueue.truth.json`, `evals/fixtures/jobqueue.evaluator.mjs`, `evals/fixtures/jobqueue-hidden-tests/`, `evals/manifest.pilot-jobqueue.json`, and real-fixture tests. The pilot binds truth SHA-256 `5742cd408da425421868fa5d9a70e9ee827d7ff9bfe57cd807d574c0ffa76232` before arm launch.
+- Go source is 2,235 lines across 18 files; `real-fixture.test.mjs` verifies public build/test, hidden-test cleanup, 23 defects, category quotas, and finding mapping.
+- During final review, found that both fixture graders could map a matching but `validated: false` claim. Added a regression and changed both graders to require `validated: true`; focused fixture tests pass 8/8.
+- Also fixed the JobQueue Go JSON-stream parser: it now splits real newline-delimited records and records whether every hidden acceptance test emitted an observable `pass`/`fail` event, preventing parser failures from being reported as ordinary unrepaired defects.
+- A root-level `go vet ./...` attempt was a cwd mistake because the repository root is not a Go module; the corrected command in `evals/fixtures/jobqueue` passed. A PowerShell `rg ... ||` probe was also corrected to PowerShell-compatible control flow; neither affected repository state.
+- Final verification after all corrections: `npm test` 260/260, `npm run test:eval` 35/35, `npm run validate` 72/72, `npm run validate:package` pass, `npm run test:package-smoke` pass, `npm pack --dry-run` 141 files, `.mjs` syntax 46/46, Go `build`/`vet`/`test` pass, and `git diff --check` pass.
+- Diff review found only the approved fixture, harness, scorer, package, test, and planning/documentation changes; no obsolete truth hash remains. No commit, push, real-model evaluation, or Graph Run was started.
+
 ## Baseline failure classification (resolved)
 
 - `a required command counts when it runs inside an exit-code-capturing wrapper`: resolved under the approved strict contract (extra wrapper commands are rejected).

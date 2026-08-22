@@ -120,7 +120,7 @@ function gradeFindings(rawFindings, defects) {
   for (const definition of DEFINITIONS) {
     const matching = [];
     (rawFindings || []).forEach((finding, index) => {
-      if (definition.pattern.test(findingText(finding))) {
+      if (finding?.validated === true && definition.pattern.test(findingText(finding))) {
         matching.push(finding);
         unmatched.delete(index);
       }

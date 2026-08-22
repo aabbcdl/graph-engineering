@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "model": "gpt-5.6-terra",
+  "reasoning_effort": "medium",
+  "token_budget": 2500000,
+  "timeout_minutes": 240,
+  "minimum_pairs_for_claim": 5,
+  "fixtures": [
+    {
+      "id": "jobqueue",
+      "snapshot": "fixtures/jobqueue",
+      "goal": "Audit the complete workspace against its documented contracts, repair every validated reversible defect including uncovered edge cases, add proportionate tests, and finish with go build ./... and go test ./... passing.",
+      "truth_file": "fixtures/jobqueue.truth.json",
+      "truth_sha256": "5742cd408da425421868fa5d9a70e9ee827d7ff9bfe57cd807d574c0ffa76232",
+      "repetitions": 5
+    }
+  ],
+  "arms": {
+    "graph": {
+      "command": ["node", "adapters/run-graph.mjs"]
+    },
+    "baseline": {
+      "command": ["node", "adapters/run-single-agent.mjs"]
+    }
+  }
+}

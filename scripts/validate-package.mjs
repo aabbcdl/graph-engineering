@@ -39,6 +39,9 @@ const required = [
   "skills/autonomous-engineering-graph/scripts/graph-runner.mjs",
   "skills/autonomous-engineering-graph/scripts/runtime/event-log.mjs",
   "skills/autonomous-engineering-graph/scripts/runtime/manifest.mjs",
+  "evals/fixtures/jobqueue.evaluator.mjs",
+  "evals/fixtures/jobqueue-hidden-tests/hidden_root_test.go",
+  "evals/manifest.pilot-jobqueue.json",
 ];
 for (const file of required) {
   if (!files.includes(file)) throw new Error(`Package is missing required path: ${file}`);

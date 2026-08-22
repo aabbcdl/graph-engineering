@@ -6,7 +6,10 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { spawnCodex } from "../skills/autonomous-engineering-graph/scripts/graph-runner.mjs";
+import {
+  recordClaudeSandboxProbe,
+  spawnCodex,
+} from "../skills/autonomous-engineering-graph/scripts/graph-runner.mjs";
 
 if (process.platform !== "win32") {
   process.stdout.write(`${JSON.stringify({ status: "skipped", reason: "Windows-only smoke test" })}\n`);
@@ -23,12 +26,15 @@ const workspace = path.join(root, "workspace");
 const nodeDir = path.join(root, "node");
 const schema = path.join(root, "result.schema.json");
 const target = path.join(workspace, "graph-windows-write-smoke.txt");
-const backend = process.env.AEG_WRITE_SMOKE_BACKEND || "codex";
+const backendArgument = process.argv.indexOf("--backend");
+const backend = process.env.AEG_WRITE_SMOKE_BACKEND || (backendArgument >= 0 ? process.argv[backendArgument + 1] : null) || "codex";
 if (!["codex", "claude"].includes(backend)) {
   throw new Error("AEG_WRITE_SMOKE_BACKEND must be codex or claude");
 }
 process.env.AEG_MODEL_QUEUE_ROOT = path.join(root, "queue");
 
+let result = null;
+let primaryError = null;
 try {
   await mkdir(workspace, { recursive: true });
   const initialized = spawnSync("git", ["init", "--quiet"], {
@@ -73,6 +79,7 @@ try {
     queueScope: "global",
     runId: "windows-write-smoke",
     nodeId: "write-probe",
+    sourceMutationAllowed: true,
   });
   if (execution.exit_code !== 0 || execution.timed_out) {
     const errors = (execution.proof.errors || []).map(String).join(" | ");
@@ -97,19 +104,32 @@ try {
   if ((execution.proof.machine_failures || []).some((failure) => failure.type === "sandbox_write_denied")) {
     throw new Error("Machine proof recorded a sandbox write denial");
   }
-  process.stdout.write(
-    `${JSON.stringify({
-      status: "pass",
-      backend,
-      sandbox: execution.proof.sandbox,
-      file_change_observed: true,
-      content_sha256: createHash("sha256").update(content).digest("hex"),
-    })}\n`,
-  );
+  result = {
+    status: "pass",
+    backend,
+    sandbox: execution.proof.sandbox,
+    file_change_observed: true,
+    content_sha256: createHash("sha256").update(content).digest("hex"),
+  };
+} catch (error) {
+  primaryError = error;
+  throw error;
 } finally {
   if (process.env.AEG_KEEP_WRITE_SMOKE !== "1") {
-    await rm(root, { recursive: true, force: true });
+    try {
+      await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
+    } catch (cleanupError) {
+      if (!primaryError) throw cleanupError;
+      process.stderr.write(`write smoke cleanup failed for ${root}: ${cleanupError.message || cleanupError}\n`);
+    }
   } else {
     process.stderr.write(`write smoke artifacts retained at ${root}\n`);
   }
 }
+
+if (backend === "claude") {
+  const capability = await recordClaudeSandboxProbe("workspace-write", workspace);
+  result.automatic_fallback_ready = capability.automatic_fallback_ready;
+  result.capability_file = capability.path;
+}
+process.stdout.write(`${JSON.stringify(result)}\n`);

@@ -1,8 +1,17 @@
 # Usage
 
-## Explicit Approval
+## Explicit Opt-In
 
-Graph Engineering is never selected merely because a task is broad, difficult, multi-file, review-oriented, or autonomous. Start a new run only after the user names Graph in the current task or explicitly accepts a concrete Graph recommendation.
+The installed Skill selects Graph only when the user names Graph Engineering
+in the current task or accepts a concrete Graph recommendation from the host.
+Task size, multiple files, review scope, autonomous wording, or approval from a
+previous task is not enough. Ordinary review, debugging, implementation,
+refactoring, testing, configuration, documentation, and release work stays in
+the current task.
+
+After current-task approval, the host passes `--user-approved` as the machine
+record for creating one run. That marker does not approve owner-gated work. A
+Graph node and Graph maintenance/control commands never start another run.
 
 Before launch, state the workspace, exact goal, that several independent agent processes will run, and that the model service may queue them for tens of minutes.
 
@@ -14,25 +23,199 @@ Use `start` when the invoking host will wait on the same runner process:
 graph-engineering start --workspace "D:\project\example" --goal "<goal>" --user-approved
 ```
 
-Use `submit` when the run should continue after the parent task returns:
+Use `submit --follow` for normal unattended work with automatic in-task visibility:
 
 ```powershell
-graph-engineering submit --workspace "D:\project\example" --goal "<goal>" --user-approved
+graph-engineering submit --workspace "D:\project\example" --goal "<goal>" --user-approved --follow
 ```
 
-Do not add `--background` to `submit`; it is already the background command. Use `resume --background` only for one exact saved run.
+Do not add `--background` to `submit`; it already launches a background runner. `--follow` keeps only the read-only display attached after the confirmed handoff. If the display or parent task closes, the runner continues and terminal notifications remain available. Use `resume --background --follow` only for one exact saved run. A confirmed background handoff includes the exact watcher command.
 
 On Windows PowerShell, use the generated `graph-engineering.ps1` launcher (PowerShell selects it automatically when the `.ps1` and `.cmd` launchers share one directory). It forwards arguments as an array, so a multiline `--goal` cannot consume or discard later flags such as `--user-approved`. Do not call `graph-engineering.cmd` directly with multiline values; `%*` is only reliable for ordinary single-line CMD arguments.
 
-## Default Version 2 Behavior
+## Default Version 3 Behavior
 
-- `--workspace-mode auto`: use a detached worktree for Git repositories and a safe copied snapshot otherwise;
+- `--workspace-mode auto`: use a detached worktree when the supplied path is the Git root/worktree root, and a safe copied snapshot for non-Git or nested paths;
 - `--supervision stage`: supervise planning, synthesis, and implementation;
 - `--notify`: send one terminal-state system notification when the platform supports it;
 - global adaptive model admission: begin with two processes, grow to four after stable success, contract on structured overload;
 - one workspace may use two read-only lanes when capacity is free, while writers remain exclusive.
 
+## Run Budget And Assurance
+
+The default v3 Run budget is 6,000,000 observed tokens, 240 effective
+execution minutes, and 96 model-process attempts. Use `--budget extended` for
+12,000,000 / 480 / 192, or select `--budget unlimited` explicitly. Individual
+ceilings are available through `--max-run-tokens`, `--max-run-minutes`, and
+`--max-run-attempts`. A resume can raise a saved ceiling but never resets the
+historical attempt, token, time, or cost snapshot.
+
+Use `--max-run-cost-usd` only with backend-reported cost or a verified
+`--pricing-file`. A missing usage or unverifiable cost source pauses the Run as
+`waiting_budget` before the next model call. A single finite token overrun is
+recorded and bounded to the completed call; a second call at the ceiling is
+never started.
+
+`--assurance auto` selects `standard` for ordinary work and `high` for
+`audit` plans or release checks. High assurance requires an independent review
+on a different backend or with an explicitly different model. When that
+capability is unavailable, the Run enters `waiting_environment` and does not
+silently downgrade.
+
+## Read-Only Control Operations
+
+`preview` reads the workspace, deterministic plan shape, backend capability
+matrix, and preflight contract. It creates no Run, isolated workspace, or
+state file:
+
+```powershell
+graph-engineering preview --workspace "D:\project\example" --goal "Audit the repository" --json
+```
+
+For one exact Run, use `diff` to inspect additions, modifications, deletions,
+and mode-only changes. `runs` lists status, size, update time, workspace, and
+recoverability. `gc` previews cleanup by default; `gc --execute` is required to
+remove only terminal Runs older than 30 days outside the newest three per
+workspace. Active or recoverable Runs are excluded, and execution leaves a
+deletion manifest under the state root. A state root above 20 GiB is warned
+about but is never deleted automatically.
+
+```powershell
+graph-engineering runs --state-root "D:\GraphEngineering\runs" --json
+graph-engineering gc --state-root "D:\GraphEngineering\runs" --json
+graph-engineering gc --state-root "D:\GraphEngineering\runs" --execute --json
+```
+
+`apply --dry-run` runs the actual apply qualification, link checks, payload
+hash checks, and source conflict checks with zero writes. `apply --file
+"path/to/file"` applies exactly one path from the result manifest and marks
+the result as a partial application. `recheck --scope apply|release` executes
+only unsatisfied saved checks in one read-only sandbox; it does not re-plan or
+re-implement, and appends evidence to lineage and completion artifacts.
+
+```powershell
+graph-engineering diff --workspace "D:\project\example" --run "<run-id>" --json
+graph-engineering apply --workspace "D:\project\example" --run "<run-id>" --dry-run --json
+graph-engineering apply --workspace "D:\project\example" --run "<run-id>" --file "src/fix.mjs"
+graph-engineering recheck --workspace "D:\project\example" --run "<run-id>" --scope release --json
+```
+
+All these commands are read-only except an explicitly requested `apply` or
+`gc --execute`. They never commit, push, deploy, publish, start Graph, or
+delete source workspace files.
+
+Use `--max-review-nodes <1-6>` only when you intentionally want a bounded
+review fan-out. The default is six specialist nodes for a broad audit; lowering
+it is recorded in the run and is preserved when the run is resumed. Results
+from a reduced run must be labeled as such because it trades coverage for cost.
+
 Use `--workspace-mode live` only when in-place changes are deliberately required. Version 1 saved runs preserve their legacy live/no-supervision behavior when resumed.
+
+On Windows, isolated worktrees and copies are stored under `%LOCALAPPDATA%\GraphEngineering\w` rather than below the longer run-evidence path. This avoids the legacy 260-character Git worktree materialization failure while `report.md` and all evidence remain under the state directory. Set `AEG_EXECUTION_ROOT` before launch only when another short local volume should hold managed execution workspaces. `purge` removes that exact managed workspace together with the run evidence; it never removes the source project.
+
+Isolated `worktree` and `copy` modes refuse source symlinks and Windows junctions before creating a snapshot. Recreating a link would allow a child process to read the source workspace or an unrelated external path. Remove the link, materialize its target, or use `--workspace-mode live` only when the loss of isolation is intentional and understood.
+
+Every startup records normalized file permission bits and refuses Git submodule
+gitlinks (`mode 160000`) in `auto`, `worktree`, `copy`, and `live` mode rather
+than silently omitting their contents.
+Run Graph against the submodule as its own workspace when needed. During copy,
+Graph verifies each file against the launch manifest and checks the source again
+after materialization; a source edit during that window stops startup with a
+snapshot-drift error.
+
+Claude nodes use a runner-generated native OS sandbox. Read-only nodes deny
+workspace writes and use `--safe-mode`, `--no-session-persistence`, and
+`failIfUnavailable`; implementation/correction nodes receive workspace write
+access only. If Claude cannot start its sandbox, the node fails closed and no
+unsandboxed command is attempted. On Windows, an explicitly selected Claude
+backend may always make that fail-closed attempt. Automatic fallback from Codex
+to Claude is enabled only after both packaged Claude sandbox smoke probes pass
+for the current Graph runner and Claude binary.
+
+`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, and proxy routing are inherited when
+their URLs contain no userinfo or sensitive credential query. Ambient
+credential variables remain excluded. When a CLI is authenticated only through
+environment variables, explicitly name the required variables, for example
+`$env:AEG_CHILD_ENV_KEYS = "ANTHROPIC_API_KEY"`, before submit/resume. A routing
+URL that embeds credentials also requires its own exact variable name in that
+list; moving the credential to a dedicated key variable is preferred. Graph
+passes only named values, records only their names in attempt evidence, redacts
+URL userinfo and credential queries, and rejects execution-control names such
+as `NODE_OPTIONS`, `GIT_*`, and `CLAUDE_CONFIG_DIR`.
+
+Installer updates, runner registration, live runs, and result application use
+the fixed user-level control root `~/.graph-engineering/runtime-control` (under
+`%USERPROFILE%` on Windows). It is intentionally independent of custom
+`--state-root` and model-queue paths. A live run and `results/apply.mjs` are
+mutually exclusive for the same workspace, and concurrent applies fail closed
+instead of interleaving.
+
+## Environment And Release Checks
+
+Graph records whether a required check needs a browser, container, database,
+device, local service, or external service. It infers this contract when a
+project plan omits it, and an unavailable runtime is reported as
+`waiting_environment` with an exact resume command. A failed assertion is not
+silently converted into an environment wait.
+
+Workspace preflight detects locked dependency and browser preparation commands,
+but does not execute a repository-selected package manager or project-local
+Playwright CLI with host privileges by default. The recorded command is run later
+inside an implementation or verification node sandbox when the selected checks
+need it. Preparation evidence is stored in `workspace-preflight.json`; it is
+setup evidence, not a rendering pass.
+
+For a trusted repository, host preparation can be enabled explicitly before
+launch:
+
+```powershell
+$env:AEG_ALLOW_HOST_DEPENDENCY_PREPARE = "1"
+$env:AEG_ALLOW_HOST_BROWSER_PREPARE = "1"
+```
+
+The two permissions are independent. `AEG_PLAYWRIGHT_BROWSERS` selects revisions
+(`chromium` by default), and `AEG_AUTO_PREPARE_BROWSERS=0` disables browser
+preparation. A browser cache matches only the same action, complete browser list,
+project-local CLI path, and host identity; `disabled` or `deferred` evidence
+cannot satisfy a later install request.
+
+Host preparation uses a minimal environment allowlist rather than inheriting
+ambient API keys, tokens, or passwords. A private registry or authenticated
+proxy that genuinely requires a variable must opt into both the host dependency
+step and the exact variable name, for example:
+
+```powershell
+$env:AEG_ALLOW_HOST_DEPENDENCY_PREPARE = "1"
+$env:AEG_PREFLIGHT_ENV_KEYS = "NPM_TOKEN,HTTPS_PROXY"
+```
+
+Those values are passed only to the preparation process and remain excluded from
+model-node environments.
+
+`package.json#packageManager` decides which lockfile Graph uses. If its manager
+does not match an available lockfile, preflight stops with
+`DEPENDENCY_LOCK_MISMATCH`. Without `packageManager`, lockfiles belonging to
+multiple managers stop with `DEPENDENCY_LOCK_AMBIGUOUS`; Graph never guesses.
+Dependencies without a supported lockfile also stop before execution.
+
+Every npm, pnpm, Yarn, or Bun dependency install disables lifecycle scripts. An
+isolated run removes `node_modules` before dependency preparation and never
+reuses that directory across run boundaries. Live mode may reuse an existing
+directory because the owner deliberately selected in-place operation. If a
+repository needs a native addon build, code generation, or another install hook,
+make it an explicit implementation or verification command so it runs inside
+the node sandbox and appears in machine evidence.
+
+Required checks default to `blocking_scope=both`, which blocks local completion,
+result application, and release readiness. Use `blocking_scope=apply` for a
+check that may be deferred while still withholding the isolated result package;
+use `blocking_scope=release` for a check that only decides publish readiness.
+The completion artifact exposes `application_ready` and `release_ready`, along
+with the unresolved check IDs, so these decisions remain explicit. After an
+`apply` gap, provide the missing environment and start a new Graph run that
+revalidates application before applying the package. After a `release` gap,
+start a new release-validation Graph run before publishing. A non-completed run
+with a `both` gap resumes the same exact run.
 
 ## Queue And Concurrency
 
@@ -50,6 +233,71 @@ graph-engineering resume --background --workspace "D:\project\example" --run "<r
 
 A background resume succeeds only when it prints `handoff: confirmed`.
 
+## Automatic Live Progress Without Model Usage
+
+Every Skill-launched submit or background resume includes `--follow`. The host
+keeps that stream attached, reports meaningful state changes, and reads the
+final artifacts as soon as the stream reaches a terminal state. The user does
+not need to ask for status or say "continue". Unchanged snapshots are not
+narrated, and the host does not create model-powered polling turns.
+
+To reattach a display to one exact run:
+
+```powershell
+graph-engineering watch `
+  --workspace "D:\project\example" `
+  --run "<run-id>"
+```
+
+The display shows the current stage and node, attempt number, completed/active/pending checkpoints, runner and model activity, queue position, time since the last persisted event, blocker, and a concrete next action when one is known. It never starts, resumes, stops, or contacts an agent model. Press Ctrl+C to detach without stopping the run.
+
+Use `--once` for one snapshot, `--json` for machine-readable output, `--interval-seconds <n>` to change refresh frequency, `--stale-seconds <n>` to tune the quiet warning, and `--no-clear` to retain prior snapshots. The checkpoint count is deliberately not shown as a percentage or ETA because node duration varies substantially.
+
+For an exact, replayable timeline, use the event reader:
+
+```powershell
+graph-engineering events `
+  --workspace "D:\project\example" `
+  --run "<run-id>" `
+  --since 0 `
+  --type WorkItemFailed
+```
+
+`--type` is repeatable. The command reads `events/events.jsonl` and never
+contacts a model or changes run state. `--json` returns the event records and
+the path to the stream, which is suitable for a desktop/session monitor.
+
+## Delivery States
+
+The node graph is an execution plan; the runtime state is the delivery record.
+Each work item is independently marked `pending`, `running`, `succeeded`,
+`failed`, `blocked`, `deferred`, or `superseded`. Run-level status follows
+these rules:
+
+- `completed`: every mandatory work item and verification gate passed.
+- `completed_with_gaps`: at least one work item succeeded, but another item or
+  final gate remains unresolved. The report lists both delivered and missing
+  work, no apply command is generated, and the CLI returns a non-zero exit
+  code so automation cannot mistake it for full success. Both `report.md` and
+  `completion.json` contain the exact same-run resume command.
+- `waiting_service`: the model endpoint was temporarily unavailable; the
+  circuit breaker released capacity and the exact run can be resumed later.
+- `waiting_environment`: a required repository environment is unavailable;
+  the report names the missing evidence and the next check.
+- `waiting_owner`: one exact protected action needs explicit authorization.
+- `failed`/`blocked`: no safe completion claim is possible; the report retains
+  the failed attempt and one concrete recovery condition.
+
+This distinction is intentional. A late verification outage must not erase a
+successful review or repair, while a partial result must never be presented as
+a release-ready run.
+
+## Oversized Node Input
+
+Verification and independent review aggregate implementation evidence, required checks, and selected domain reviews, so they use a 256000-byte budget. Graph automatically retries prompt construction with standard, tight, minimal, and emergency dependency compaction before it contacts a model. The selected level and every attempted byte count are saved in `nodes/<node-id>/input-compaction.json`.
+
+If all levels still exceed the limit, the run stops with `NODE_INPUT_BUDGET_EXCEEDED` before spending model tokens. Reduce the named Skill or upstream artifact source, or install a compatible newer Graph runtime, then resume the same run ID so only the blocked node input is rebuilt. Start a new run only if the saved snapshot no longer passes freshness checks. `watch` detects when the installed runtime's budget is already higher than the budget recorded by an older blocked run and recommends the exact-run resume path.
+
 ## Exact Run Control
 
 ```powershell
@@ -59,7 +307,7 @@ graph-engineering resume --workspace "D:\project\example" --run "<run-id>"
 graph-engineering purge --workspace "D:\project\example" --run "<run-id>"
 ```
 
-`stop` is recoverable and preserves completed nodes and evidence. `purge` deletes one inactive run's local evidence and isolated worktree; it does not delete source workspace files.
+`stop` is recoverable and preserves completed nodes and evidence. `purge` deletes one inactive run's local evidence and its exact managed isolated worktree or copy; it does not delete source workspace files.
 
 When several incomplete runs exist, always provide the exact run ID. Never guess.
 
@@ -113,6 +361,6 @@ The command receives `GRAPH_RUN_ID`, `GRAPH_STATUS`, `GRAPH_WORKSPACE`, `GRAPH_E
 
 ## Applying Isolated Results
 
-The source workspace is untouched during an isolated run. On completion, inspect `report.md`, `completion.json`, and the diff in the run's `results` directory. Then execute the exact `apply_command` recorded in `run.json` or the report.
+The source workspace is untouched during an isolated run. On completion, inspect `report.md`, `completion.json`, and the diff in the run's `results` directory. Execute the exact `apply_command` recorded in `run.json` or the report only when `application_ready=true`. A completed run with an apply-scoped gap deliberately has no apply command; resolve the gap and run the application-validation decision recorded in `next_actions`.
 
-The apply script verifies every source record against its launch hash before writing. A conflict stops the entire apply before any file changes. Graph never commits or merges the result automatically.
+The apply script verifies every source record and packaged file against its launch hash before writing. A conflict stops the entire apply before any file changes. It also stages verified backups and result payloads before commit. If a later file write or final verification fails, already touched targets are restored and newly created empty directories are removed. If another process changes a touched target during rollback, the script refuses to overwrite it and prints the preserved backup directory for manual recovery. Symlinks and Windows junctions are never applied from an isolated result package; any linked source, result, parent, leaf, or payload path is rejected. Graph never commits or merges the result automatically.

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
-import { access, chmod, copyFile, lstat, mkdir, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, lstat, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { manifestFilesDiff, manifestPathMatches } from "./runtime/manifest.mjs";
 
 function argument(name) {
   const index = process.argv.indexOf(name);
@@ -25,21 +25,8 @@ async function readJson(target) {
   return JSON.parse(await readFile(target, "utf8"));
 }
 
-async function hashFile(target) {
-  const hash = createHash("sha256");
-  hash.update(await readFile(target));
-  return hash.digest("hex");
-}
-
 function changedFiles(before, after) {
-  const changed = [];
-  const all = new Set([...Object.keys(before.files || {}), ...Object.keys(after.files || {})]);
-  for (const file of [...all].sort()) {
-    const left = before.files?.[file];
-    const right = after.files?.[file];
-    if (!left || !right || left.sha256 !== right.sha256 || left.missing !== right.missing) changed.push(file);
-  }
-  return changed;
+  return manifestFilesDiff(before, after);
 }
 
 function workspacePath(workspace, relative) {
@@ -91,19 +78,7 @@ function findExternalGit(workspace) {
 }
 
 async function matchesRecord(target, record) {
-  if (!record || record.missing) return !(await exists(target));
-  try {
-    const details = await lstat(target);
-    if (record.kind === "symlink") {
-      if (!details.isSymbolicLink()) return false;
-      const linkTarget = await readlink(target);
-      return linkTarget === record.link_target && createHash("sha256").update(`symlink\0${linkTarget}`).digest("hex") === record.sha256;
-    }
-    if (details.isSymbolicLink()) return false;
-    return details.isFile() && (await hashFile(target)) === record.sha256;
-  } catch {
-    return false;
-  }
+  return manifestPathMatches(target, record);
 }
 
 async function main() {

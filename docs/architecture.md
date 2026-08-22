@@ -2,7 +2,7 @@
 
 ## Boundaries
 
-The installable Skill is a thin, explicit opt-in entry point. The deterministic runner owns orchestration, persistence, model admission, safety gates, evidence capture, reporting, notification, and result export. Each node starts a fresh agent CLI process; the parent chat is not the runtime controller and does not need to remain alive.
+The installable Skill is an explicit opt-in entry point for repository engineering tasks. The deterministic runner owns orchestration, persistence, model admission, safety gates, evidence capture, reporting, notification, and result export. Each node starts a fresh agent CLI process; the parent chat is not the runtime controller and does not need to remain alive. Ordinary repository work remains direct unless the current task names Graph or accepts a concrete recommendation.
 
 The standalone repository is authoritative. Global Skill folders are deployment copies created by the transactional installer.
 
@@ -29,15 +29,99 @@ Every non-planner node has a preflight input budget. The runner compacts upstrea
 
 ## Frozen Execution Workspace
 
-`auto` selects a detached Git worktree when possible. The runner recreates the exact launch state, including dirty tracked and untracked files, inside the worktree. Non-Git workspaces use a copy that does not follow links. Nodes read and write only the execution workspace; project rules are discovered from the source snapshot.
+`auto` selects a detached Git worktree only when the supplied path is the Git root/worktree root. A path nested inside a larger repository is scoped to that directory and uses a copy, so parent-repository files cannot leak into the audit. The runner recreates the exact launch state, including dirty tracked and untracked files, inside the selected snapshot. Non-Git workspaces use a copy that does not follow links. Nodes read and write only the execution workspace; project rules are discovered from the source snapshot.
 
-The source workspace and execution workspace have separate identities in every run artifact. Source development after launch cannot invalidate an isolated run. At the end, Graph exports only changes attributable to implementation or correction writers. `results/apply.mjs` verifies launch hashes and refuses the whole operation when any target has changed.
+On Windows, the managed execution workspace defaults to the short path `%LOCALAPPDATA%\GraphEngineering\w\<run-hash>` and Git worktree commands enable long-path handling explicitly. `AEG_EXECUTION_ROOT` can override the managed root on any platform. Snapshot creation is transactional: worktree registration/index initialization or dirty-state overlay failure removes both the partial directory and its Git worktree registration before startup returns an error. Graph initializes only the detached worktree index and copies the launch manifest directly, so repository checkout filters and hooks do not run before the node sandbox exists. The persisted isolation record binds each external directory to one run, and `purge` refuses an external path that does not carry that binding.
+
+The source workspace and execution workspace have separate identities in every run artifact. Source file development after launch does not alter an isolated execution workspace. Linked worktrees still share Git refs and repository config, so Graph hashes those fields around every node and conservatively blocks if they change while a node is active. At the end, Graph exports only changes attributable to implementation or correction writers. `results/apply.mjs` verifies launch hashes and refuses the whole operation when any target has changed. Before its first source mutation it stages every payload and verifies a backup of every existing target. A later apply error restores already touched targets and removes Graph-created directories; if a target changes again during rollback, Graph preserves the backups and reports the exact unresolved path instead of overwriting that concurrent change. The complete apply transaction holds a fixed workspace admission lock, so two result packages cannot interleave; a `live` run holds the same lock through its final report. Isolated `worktree` and `copy` modes refuse leaf symlinks and Windows junctions before snapshot creation; preserving a link would otherwise let a child process resolve back into the source or an unrelated external directory. A writer-created link is retained as evidence but makes the result package ineligible for application, and the apply script independently rejects forged or stale link records before touching the source. Repositories that intentionally require linked paths must opt into `--workspace-mode live` and accept that the source is no longer isolated.
 
 `live` exists for deliberate in-place operation and for version 1 compatibility. It should not be the default for long-running work.
+
+Runtime maintenance uses one fixed user-level control root at
+`~/.graph-engineering/runtime-control` (the equivalent path below
+`%USERPROFILE%` on Windows), independent of model-queue and run-state roots.
+The installer holds its global admission lock from the active-runtime scan
+through the transactional Skill and launcher swap. A runner briefly takes that
+same lock while creating its run lock and canonical registry record, closing
+the scan-to-start race and serializing concurrent installers.
+
+## Environment Contracts And Gate Scope
+
+Required checks carry a machine-readable environment contract. The planner may
+declare `environment_kind` (`browser`, `container`, `database`, `device`,
+`service`, or `external_service`), while the deterministic runner also infers
+the kind for incomplete and legacy plans. This inference only describes what a
+check needs; verification still requires a successful host command or tool
+event. A missing runtime becomes `waiting_environment`, while an ordinary test
+assertion failure remains a bounded correction or hard verification failure.
+
+Checks default to `blocking_scope=both`. A `both` check blocks local completion,
+an `apply` check allows the run to finish but withholds isolated result
+application, and a `release` check only sets `release_ready=false`. The
+completion artifact exposes completion, application, and release readiness so
+callers cannot confuse "code verified" with "safe to apply" or "ready to publish".
+An unresolved `apply` check requires a new application-validation Graph run after
+the environment is available. An unresolved `release` check requires a new
+release-validation Graph run before publication. A non-completed run with a
+`both` gap resumes the same exact run.
+
+Provider and proxy endpoints cross the child boundary automatically only when
+their URL contains no userinfo or sensitive credential query. An endpoint with
+embedded credentials requires its exact environment name in
+`AEG_CHILD_ENV_KEYS`; dedicated API-key variables remain the preferred form.
+Evidence redaction removes both URL userinfo and sensitive query values.
+
+Workspace preflight selects and records locked dependency and browser preparation
+commands, but does not execute repository-selected package managers or a
+project-local Playwright CLI with host privileges by default. Implementation and
+verification nodes restore the required dependencies or browser revisions inside
+their sandbox. A trusted repository can explicitly enable the earlier host step
+with `AEG_ALLOW_HOST_DEPENDENCY_PREPARE=1` or
+`AEG_ALLOW_HOST_BROWSER_PREPARE=1`. Host preparation receives a minimal
+environment allowlist; ambient credentials are excluded unless their exact names
+are listed in `AEG_PREFLIGHT_ENV_KEYS`.
+
+For Node projects, `package.json#packageManager` is authoritative. Its manager
+must match an available lockfile. Without that declaration, lockfiles for more
+than one manager are an ambiguity error rather than a guessed choice. Every
+dependency install disables npm, pnpm, Yarn, and Bun lifecycle scripts. Isolated
+runs remove `node_modules` before preparation and never reuse it across run
+boundaries; a live workspace may reuse an existing directory without executing
+it. Browser preparation records the complete action, requested browser list,
+local CLI path, and host identity, so a deferred or narrower cache entry cannot
+satisfy a later install request. Preparation is setup evidence only, never proof
+that an application rendered successfully. Native builds and generated clients
+remain explicit sandboxed implementation or verification commands.
 
 ## Persistence And Recovery
 
 Run state lives below `$CODEX_HOME/graph-runs/<workspace-hash>/<run-id>`. Atomic `run.json` and `graph.json` updates, a single run lock, per-attempt event files, checkpoints, and workspace manifests make interruption recoverable without chat memory.
+
+The runtime layer makes those records explicit instead of treating the report
+as the source of truth:
+
+| Record | Owner | Purpose |
+|---|---|---|
+| `run.json` | control plane | durable run options, gates, blockers, and compatibility state |
+| `runtime-state.json` | control plane | current run status plus one state record per graph work item |
+| `events/events.jsonl` | control plane | ordered lifecycle facts such as queued, admitted, retried, failed, and completed |
+| `artifacts/<sha256>.*` | artifact store | immutable plans, node results, and reports verified by content hash |
+| `nodes/<id>/attempts/` | worker adapter | raw process events, checkpoints, commands, and usage for one attempt |
+
+The append-only stream is deliberately separate from mutable summaries. A
+crashed watcher can reconstruct progress from events, while a corrupted or
+stale summary cannot silently rewrite history. Event writes are queued per run
+to preserve sequence numbers when several read-only workers finish together;
+event logging errors are retained as diagnostics and never turn a valid code
+change into an invented failure.
+
+The run state model is intentionally more expressive than the legacy
+`completed`/`failed` pair. `completed` requires all mandatory gates;
+`completed_with_gaps` records useful delivered work with unresolved work items;
+`waiting_service`, `waiting_environment`, and `waiting_owner` preserve the
+exact external wait; `failed_recoverable` and `failed_system` distinguish a
+retryable work-item problem from a controller failure. A partial outcome is
+never eligible for automatic result application.
 
 Queued work has no active model child. Temporary service failures use a short retry plus a three-failure circuit breaker. An owner stop interrupts a queue wait or active child, records `interrupted`, releases capacity, and keeps the same run ID resumable.
 
@@ -77,9 +161,18 @@ Associated node cost is not exclusive per-finding cost. One node may contribute 
 
 ## Completion And Notification
 
-A run is complete only after implementation or a proved no-op, successful required checks, and a fresh passing independent review. Every report generation writes `completion.json`; terminal states can trigger one deduplicated platform notification and one optional custom command.
+A run is complete only after implementation or a proved no-op, successful required checks, and a fresh passing independent review. Every report generation writes `completion.json`; terminal states can trigger one deduplicated platform notification and one optional custom command. An approved `submit --follow` or `resume --background --follow` keeps the host task attached to the same read-only watcher so progress and the final report do not depend on repeated user prompts. The watcher is observational only and may detach without affecting the runner.
 
 The completion artifact contains the actual status, phase, source and execution workspaces, workspace mode, changed files, checks, independent review, blocker, safe resume or authorization requirement, total observed cost, notification result, and the path to finding lineage.
+
+`watch` and `events` are read-only control-plane clients. They do not acquire a
+model lease and do not mutate a run. This keeps visibility independent from
+agent capacity and lets a host detach and later reattach without losing the
+timeline. Notifications are only a convenience signal; `completion.json`,
+the event stream, and observed verification evidence remain authoritative.
+
+The architectural rationale and migration boundary are recorded in
+[`superpowers/specs/2026-08-17-durable-control-plane-design.md`](superpowers/specs/2026-08-17-durable-control-plane-design.md).
 
 ## Safety
 
@@ -93,4 +186,4 @@ Supervisors receive only a compact representation of the stage they control plus
 
 ## Installation
 
-The installer scans both run locks and model leases. If any live Graph process exists, installation stops before staging. Otherwise it copies all Skills to a temporary location, validates retained prompt hashes and metadata, moves the old installation to a rollback directory, swaps the new package, writes the launcher, and removes the backup only after success.
+Each runner writes a process-identity record in the shared runtime registry as well as its exact run directory, so an external `--state-root` does not hide it from installation safety checks. The installer scans those records, configured/default run roots, and model leases. If any live Graph process exists, installation stops before staging. Otherwise it stages and validates all Skills and launchers, backs up both surfaces, commits them together, and restores both on any pre-commit failure. Cleanup after a successful commit cannot roll back only one surface; a cleanup problem is returned as a warning while the matched runtime remains installed.

@@ -1,7 +1,7 @@
 interface:
   display_name: "Graph Engineering"
-  short_description: "Run user-approved engineering graphs"
-  default_prompt: "Use $autonomous-engineering-graph for this explicitly approved Graph task, then inspect, implement, verify, and report it autonomously."
+  short_description: "Run an explicitly approved repository engineering graph"
+  default_prompt: "Use $autonomous-engineering-graph for this explicitly approved task, keep its read-only live progress attached, and report the evidence-backed terminal result."
 
 policy:
   allow_implicit_invocation: false

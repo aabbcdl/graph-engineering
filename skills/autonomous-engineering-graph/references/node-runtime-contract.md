@@ -18,11 +18,16 @@ this contract from disk, and do not invoke Graph recursively.
 
 - Never commit, push, deploy, publish, restart a device, mutate a remote
   service, disclose a secret, or perform an irreversible data operation.
-- Discovery, review, synthesis, and supervision do not modify files.
+- Discovery, review, synthesis, and supervision do not modify files. The planner is also source-read-only; any observed tracked or unignored change is a hard `READ_ONLY_SOURCE_MUTATION` result.
 - Only implementation and correction may change source files.
 - Verification and independent review may create ignored build or test output,
   but must not change tracked or unignored source files.
 - An authorization applies only to the exact recorded scope.
+
+When Claude is the worker, the runner-provided native sandbox settings are
+authoritative. A node must not disable the sandbox or use an unsandboxed
+fallback; `failIfUnavailable` means the attempt must stop when the host cannot
+provide the requested boundary.
 
 ## Evidence
 
@@ -30,6 +35,9 @@ this contract from disk, and do not invoke Graph recursively.
 - Base actionable findings on current evidence and counter-evidence.
 - Commands and files in the response are claims. The runner independently
   compares them with host events and workspace manifests.
+- In `commands[].command`, copy the complete literal command submitted in the
+  successful tool call, including wrappers, pipelines, and inline scripts.
+  Never substitute a prose label, summary, or placeholder.
 - Preserve a finding's fingerprint or link its earlier identity through
   `related_finding_ids`. Mark a finding fixed only when linked verification
   evidence proves it and fresh independent review agrees.
@@ -53,6 +61,10 @@ this contract from disk, and do not invoke Graph recursively.
 - Planner-required checks are runner-owned future verification obligations.
   Synthesis and synthesis supervision must make actions verifiable, but must
   not repeat, execute, or add check-result records for those future commands.
+- A deferred workspace preflight is an intentional host-safety boundary, not a
+  missing environment. Implementation or verification restores the recorded
+  locked dependencies and requested browser revisions inside its sandbox, with
+  package lifecycle scripts disabled.
 - A supervisor requests at most one bounded correction for a material defect in
   its owned artifact. Metadata that the deterministic runner owns is not an
   artifact defect.
@@ -61,6 +73,8 @@ this contract from disk, and do not invoke Graph recursively.
 
 - Reviewing or reporting a protected action does not itself require owner
   authorization.
+- The planner cannot create an owner gate. Only synthesis may create one after
+  evidence proves that the current goal requires one concrete protected action.
 - Use an `AUTHORIZATION` or `OWNER_GATE` blocker only for one concrete protected
   action and set `required_for_current_goal: true` only when the approved goal
   cannot be completed without performing that action.

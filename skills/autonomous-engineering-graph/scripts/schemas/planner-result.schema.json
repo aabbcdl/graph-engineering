@@ -11,39 +11,64 @@
     "required_checks",
     "discovery_skills",
     "review_nodes",
+    "review_waves",
+    "coverage",
     "implementation_skills",
     "verification_skills",
     "excluded_surfaces"
   ],
   "properties": {
-    "task_summary": { "type": "string", "minLength": 1 },
+    "task_summary": { "type": "string", "minLength": 1, "maxLength": 4000 },
     "mode": { "type": "string", "enum": ["task", "audit", "diagnosis", "review"] },
-    "scope": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "scope": { "type": "array", "items": { "type": "string", "maxLength": 2000 }, "minItems": 1, "maxItems": 30 },
     "risk_level": { "type": "string", "enum": ["low", "medium", "high"] },
     "completion_criteria": {
       "type": "array",
-      "items": { "type": "string" },
-      "minItems": 1
+      "items": { "type": "string", "maxLength": 2000 },
+      "minItems": 1,
+      "maxItems": 30
     },
     "required_checks": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 40,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "description", "command", "evidence_tool", "source"],
+        "required": [
+          "id",
+          "description",
+          "command",
+          "evidence_tool",
+          "source",
+          "equivalent_commands",
+          "environment_required",
+          "gap_policy",
+          "environment_kind",
+          "blocking_scope"
+        ],
         "properties": {
           "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,39}$" },
-          "description": { "type": "string", "minLength": 1 },
-          "command": { "type": ["string", "null"] },
-          "evidence_tool": { "type": ["string", "null"] },
-          "source": { "type": "string", "minLength": 1 }
+          "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "command": { "type": ["string", "null"], "maxLength": 8000 },
+          "evidence_tool": { "type": ["string", "null"], "maxLength": 1000 },
+          "source": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "equivalent_commands": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 8000 } },
+          "environment_required": { "type": "boolean" },
+          "gap_policy": { "type": "string", "enum": ["fail", "waiting_environment"] },
+          "environment_kind": { "type": ["string", "null"], "enum": ["browser", "container", "database", "device", "service", "external_service", null] },
+          "blocking_scope": {
+            "type": "string",
+            "enum": ["both", "apply", "release"],
+            "description": "both blocks local completion, apply blocks isolated result application, release only blocks release readiness"
+          }
         }
       }
     },
     "discovery_skills": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string", "maxLength": 160 },
+      "maxItems": 8
     },
     "review_nodes": {
       "type": "array",
@@ -54,8 +79,8 @@
         "required": ["id", "title", "focus", "skills"],
         "properties": {
           "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,39}$" },
-          "title": { "type": "string", "minLength": 1 },
-          "focus": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "focus": { "type": "string", "minLength": 1, "maxLength": 3000 },
           "skills": {
             "type": "array",
             "items": { "type": "string" },
@@ -64,25 +89,82 @@
         }
       }
     },
+    "review_waves": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 6,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "title", "focus", "skills"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,39}$" },
+            "title": { "type": "string", "minLength": 1, "maxLength": 1000 },
+            "focus": { "type": "string", "minLength": 1, "maxLength": 3000 },
+            "skills": { "type": "array", "items": { "type": "string" }, "maxItems": 4 }
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_domains", "optional_domains", "omitted_domains", "verification_gaps"],
+      "properties": {
+        "required_domains": { "type": "array", "maxItems": 30, "items": { "type": "string", "maxLength": 160 } },
+        "optional_domains": { "type": "array", "maxItems": 30, "items": { "type": "string", "maxLength": 160 } },
+        "omitted_domains": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "reason"],
+            "properties": {
+              "id": { "type": "string", "maxLength": 160 },
+              "reason": { "type": "string", "maxLength": 2000 }
+            }
+          }
+        },
+        "verification_gaps": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "description", "reason"],
+            "properties": {
+              "id": { "type": "string", "maxLength": 160 },
+              "description": { "type": "string", "maxLength": 2000 },
+              "reason": { "type": "string", "maxLength": 2000 }
+            }
+          }
+        }
+      }
+    },
     "implementation_skills": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": { "type": "string", "maxLength": 160 },
       "maxItems": 5
     },
     "verification_skills": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": { "type": "string", "maxLength": 160 },
       "maxItems": 5
     },
     "excluded_surfaces": {
       "type": "array",
+      "maxItems": 30,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["surface", "reason"],
         "properties": {
-          "surface": { "type": "string" },
-          "reason": { "type": "string" }
+          "surface": { "type": "string", "maxLength": 1000 },
+          "reason": { "type": "string", "maxLength": 2000 }
         }
       }
     }

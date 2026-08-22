@@ -1,0 +1,10 @@
+{
+  "defects": [
+    { "id": "tenant-isolation", "severity": "critical", "title": "Appointment listing leaks records across tenants" },
+    { "id": "list-input-mutation", "severity": "medium", "title": "Appointment listing mutates the caller's array" },
+    { "id": "token-history-loss", "severity": "high", "title": "Token rotation deletes historical records" },
+    { "id": "expiry-boundary", "severity": "high", "title": "A token is accepted at its exact expiry" },
+    { "id": "csv-formula-injection", "severity": "high", "title": "CSV export permits spreadsheet formulas" },
+    { "id": "refunded-revenue", "severity": "medium", "title": "Refunded orders remain in net revenue" }
+  ]
+}

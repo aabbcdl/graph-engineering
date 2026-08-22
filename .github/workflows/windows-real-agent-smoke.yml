@@ -1,0 +1,34 @@
+name: Windows real-agent smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ${{ matrix.name }}
+    runs-on: [self-hosted, Windows, graph-engineering]
+    environment: graph-engineering-real-agent-smoke
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Codex writer
+            command: npm run test:windows-codex-write-smoke
+          - name: Claude reader
+            command: npm run test:windows-claude-sandbox-smoke
+          - name: Claude writer
+            command: npm run test:windows-claude-write-smoke
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run protected real-agent smoke
+        shell: powershell
+        run: ${{ matrix.command }}

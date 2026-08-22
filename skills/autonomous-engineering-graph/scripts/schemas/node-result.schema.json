@@ -16,38 +16,49 @@
     "next_actions"
   ],
   "properties": {
-    "status": { "type": "string", "enum": ["completed", "needs_retry", "blocked", "skipped"] },
-    "gate": { "type": "string", "enum": ["pass", "fail", "blocked", "not_applicable"] },
-    "summary": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "needs_retry", "blocked", "skipped"],
+      "description": "Whether this node completed its assigned work. Discovering defects does not make a discovery or review node incomplete; use needs_retry only when the node's own evidence or coverage is materially incomplete."
+    },
+    "gate": {
+      "type": "string",
+      "enum": ["pass", "fail", "blocked", "not_applicable"],
+      "description": "Whether this node's own stage obligation is satisfied. Review findings flow to synthesis and do not by themselves fail the review gate."
+    },
+    "summary": { "type": "string", "maxLength": 4000 },
     "skills_applied": {
       "type": "array",
+      "maxItems": 8,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["name", "sha256", "requirements_applied"],
         "properties": {
-          "name": { "type": "string" },
+          "name": { "type": "string", "maxLength": 160 },
           "sha256": { "type": "string" },
-          "requirements_applied": { "type": "array", "items": { "type": "string" } }
+          "requirements_applied": { "type": "array", "maxItems": 12, "items": { "type": "string", "maxLength": 1000 } }
         }
       }
     },
     "evidence": {
       "type": "array",
+      "maxItems": 60,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["claim", "source", "kind", "finding_ids"],
         "properties": {
-          "claim": { "type": "string" },
-          "source": { "type": "string" },
+          "claim": { "type": "string", "maxLength": 3000 },
+          "source": { "type": "string", "maxLength": 1000 },
           "kind": { "type": "string", "enum": ["code", "test", "runtime", "document", "tool", "unknown"] },
-          "finding_ids": { "type": "array", "items": { "type": "string" } }
+          "finding_ids": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 240 } }
         }
       }
     },
     "findings": {
       "type": "array",
+      "maxItems": 50,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -64,14 +75,14 @@
           "disposition"
         ],
         "properties": {
-          "id": { "type": "string" },
+          "id": { "type": "string", "maxLength": 240 },
           "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
-          "title": { "type": "string" },
-          "evidence": { "type": "string" },
-          "recommended_action": { "type": "string" },
-          "fingerprint": { "type": "string" },
-          "related_finding_ids": { "type": "array", "items": { "type": "string" } },
-          "evidence_anchors": { "type": "array", "items": { "type": "string" } },
+          "title": { "type": "string", "maxLength": 1000 },
+          "evidence": { "type": "string", "maxLength": 5000 },
+          "recommended_action": { "type": "string", "maxLength": 3000 },
+          "fingerprint": { "type": "string", "maxLength": 320 },
+          "related_finding_ids": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 240 } },
+          "evidence_anchors": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 500 } },
           "validation": {
             "type": "string",
             "enum": ["unknown", "unverified", "reproduced", "test_confirmed", "refuted"]
@@ -85,48 +96,51 @@
     },
     "commands": {
       "type": "array",
+      "maxItems": 80,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["command", "exit_code", "summary"],
         "properties": {
-          "command": { "type": "string" },
+          "command": { "type": "string", "maxLength": 8000 },
           "exit_code": { "type": ["integer", "null"] },
-          "summary": { "type": "string" }
+          "summary": { "type": "string", "maxLength": 2000 }
         }
       }
     },
     "checks": {
       "type": "array",
+      "maxItems": 80,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["id", "status", "evidence", "command", "finding_ids"],
         "properties": {
-          "id": { "type": "string" },
+          "id": { "type": "string", "maxLength": 240 },
           "status": { "type": "string", "enum": ["pass", "fail", "not_applicable"] },
-          "evidence": { "type": "string" },
-          "command": { "type": ["string", "null"] },
-          "finding_ids": { "type": "array", "items": { "type": "string" } }
+          "evidence": { "type": "string", "maxLength": 3000 },
+          "command": { "type": ["string", "null"], "maxLength": 8000 },
+          "finding_ids": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 240 } }
         }
       }
     },
-    "files_changed": { "type": "array", "items": { "type": "string" } },
+    "files_changed": { "type": "array", "maxItems": 500, "items": { "type": "string", "maxLength": 500 } },
     "blockers": {
       "type": "array",
+      "maxItems": 30,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["type", "reason", "unblock_condition", "required_for_current_goal", "protected_action"],
         "properties": {
-          "type": { "type": "string" },
-          "reason": { "type": "string" },
-          "unblock_condition": { "type": "string" },
+          "type": { "type": "string", "maxLength": 160 },
+          "reason": { "type": "string", "maxLength": 3000 },
+          "unblock_condition": { "type": "string", "maxLength": 2000 },
           "required_for_current_goal": { "type": ["boolean", "null"] },
-          "protected_action": { "type": ["string", "null"] }
+          "protected_action": { "type": ["string", "null"], "maxLength": 2000 }
         }
       }
     },
-    "next_actions": { "type": "array", "items": { "type": "string" } }
+    "next_actions": { "type": "array", "maxItems": 60, "items": { "type": "string", "maxLength": 2000 } }
   }
 }

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "model": "gpt-5.6-terra",
+  "reasoning_effort": "medium",
+  "token_budget": 2500000,
+  "timeout_minutes": 180,
+  "minimum_pairs_for_claim": 5,
+  "fixtures": [
+    {
+      "id": "booking-ledger",
+      "snapshot": "fixtures/booking-ledger",
+      "goal": "Audit the complete workspace against its documented contracts, repair every validated reversible defect including uncovered edge cases, add proportionate tests, and finish with the required test suite passing.",
+      "truth_file": "fixtures/booking-ledger.truth.json",
+      "repetitions": 1
+    }
+  ],
+  "arms": {
+    "graph": {
+      "command": ["node", "adapters/run-graph.mjs"]
+    },
+    "baseline": {
+      "command": ["node", "adapters/run-single-agent.mjs"]
+    }
+  }
+}

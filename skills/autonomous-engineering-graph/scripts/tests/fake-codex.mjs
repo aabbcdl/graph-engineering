@@ -1,7 +1,63 @@
 #!/usr/bin/env node
 
-import { mkdir, open, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+
+function schemaTypeMatches(value, type) {
+  if (type === "null") return value === null;
+  if (type === "array") return Array.isArray(value);
+  if (type === "object") return value !== null && typeof value === "object" && !Array.isArray(value);
+  if (type === "integer") return Number.isInteger(value);
+  return typeof value === type;
+}
+
+function assertSchemaFixture(value, definition, location = "$") {
+  const types = Array.isArray(definition.type) ? definition.type : definition.type ? [definition.type] : [];
+  if (types.length && !types.some((type) => schemaTypeMatches(value, type))) {
+    throw new Error(`Fake Codex fixture at ${location} does not match schema type ${types.join("|")}`);
+  }
+  if (definition.enum && !definition.enum.some((candidate) => Object.is(candidate, value))) {
+    throw new Error(`Fake Codex fixture at ${location} is not one of the schema enum values`);
+  }
+  if (value === null) return;
+  if (Array.isArray(value)) {
+    if (definition.minItems !== undefined && value.length < definition.minItems) {
+      throw new Error(`Fake Codex fixture at ${location} has fewer than ${definition.minItems} items`);
+    }
+    if (definition.maxItems !== undefined && value.length > definition.maxItems) {
+      throw new Error(`Fake Codex fixture at ${location} has more than ${definition.maxItems} items`);
+    }
+    if (definition.items) value.forEach((item, index) => assertSchemaFixture(item, definition.items, `${location}[${index}]`));
+    return;
+  }
+  if (typeof value === "string") {
+    if (definition.minLength !== undefined && value.length < definition.minLength) {
+      throw new Error(`Fake Codex fixture at ${location} is shorter than ${definition.minLength}`);
+    }
+    if (definition.maxLength !== undefined && value.length > definition.maxLength) {
+      throw new Error(`Fake Codex fixture at ${location} is longer than ${definition.maxLength}`);
+    }
+    if (definition.pattern && !new RegExp(definition.pattern).test(value)) {
+      throw new Error(`Fake Codex fixture at ${location} does not match ${definition.pattern}`);
+    }
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const key of definition.required || []) {
+      if (!Object.hasOwn(value, key)) throw new Error(`Fake Codex fixture is missing ${location}.${key}`);
+    }
+    if (definition.additionalProperties === false) {
+      for (const key of Object.keys(value)) {
+        if (!Object.hasOwn(definition.properties || {}, key)) {
+          throw new Error(`Fake Codex fixture contains unsupported property ${location}.${key}`);
+        }
+      }
+    }
+    for (const [key, child] of Object.entries(definition.properties || {})) {
+      if (Object.hasOwn(value, key)) assertSchemaFixture(value[key], child, `${location}.${key}`);
+    }
+  }
+}
 
 function optionValue(name) {
   const index = process.argv.indexOf(name);
@@ -76,6 +132,8 @@ let expectedFailure = false;
 let nodeProcessFailure = false;
 let nodeTransientFailure = false;
 let unprovenCapabilityAttempt = false;
+let scopedCheckId = null;
+let scopedCheckCommand = null;
 const plannerProcessFailure =
   path.basename(schema) === "planner-result.schema.json" &&
   (
@@ -113,6 +171,9 @@ if (plannerProcessFailure) {
 } else if (path.basename(schema) === "planner-result.schema.json") {
   const plannerHoldMs = Number.parseInt(process.env.AEG_FAKE_PLANNER_HOLD_MS || "0", 10);
   if (plannerHoldMs > 0) await new Promise((resolve) => setTimeout(resolve, plannerHoldMs));
+  if (scenario === "planner-source-mutation") {
+    await writeFile(path.join(workspace, "planner-mutation.txt"), "planner must remain read-only\n", "utf8");
+  }
   result = {
     task_summary: "Exercise the complete autonomous graph",
     mode: "task",
@@ -123,9 +184,14 @@ if (plannerProcessFailure) {
       {
         id: "fixture-verification",
         description: "Run the fixture verification",
-        command: "fake-check verification",
-        evidence_tool: null,
-        source: "fixture project rules",
+         command: "fake-check verification",
+         evidence_tool: null,
+         source: "fixture project rules",
+          equivalent_commands: [],
+          environment_required: false,
+          gap_policy: "fail",
+          environment_kind: null,
+        blocking_scope: "both",
       },
     ],
     discovery_skills: ["fixture-review"],
@@ -133,10 +199,23 @@ if (plannerProcessFailure) {
       { id: "behavior", title: "Behavior review", focus: "Review expected behavior", skills: ["fixture-review"] },
       { id: "risk", title: "Risk review", focus: "Review regression risk", skills: ["fixture-review"] },
     ],
+    review_waves: [],
+    coverage: {
+      required_domains: [],
+      optional_domains: [],
+      omitted_domains: [],
+      verification_gaps: [],
+    },
     implementation_skills: ["fixture-review"],
     verification_skills: ["fixture-review"],
     excluded_surfaces: [],
   };
+  if (scenario === "supervision-correction" && /attempt-2/.test(output)) {
+    result = {
+      ...result,
+      completion_criteria: [...result.completion_criteria, "planner supervision feedback is explicitly addressed"],
+    };
+  }
   if (scenario === "specialist-routing") {
     result = {
       ...result,
@@ -172,6 +251,11 @@ if (plannerProcessFailure) {
           command: null,
           evidence_tool: "Host command events followed by screenshots or an access-gap artifact",
           source: "optional mini-program tooling",
+          equivalent_commands: [],
+          environment_required: true,
+          gap_policy: "waiting_environment",
+          environment_kind: "device",
+          blocking_scope: "both",
         },
         {
           id: "independent-release-review",
@@ -179,6 +263,33 @@ if (plannerProcessFailure) {
           command: null,
           evidence_tool: "Fresh-context graph-release-assurance review artifact in host events",
           source: "Graph lifecycle final-review requirement",
+          equivalent_commands: [],
+          environment_required: false,
+          gap_policy: "fail",
+          environment_kind: null,
+          blocking_scope: "both",
+        },
+      ],
+    };
+  }
+  if (["release-only-gap", "apply-only-gap"].includes(scenario)) {
+    const scope = scenario === "apply-only-gap" ? "apply" : "release";
+    const checkId = scenario === "apply-only-gap" ? "apply-environment" : "release-environment";
+    result = {
+      ...result,
+      required_checks: [
+        ...result.required_checks,
+        {
+          id: checkId,
+          description: scope === "apply" ? "Verify the external apply environment" : "Verify the external release environment",
+          command: `fake-check ${checkId}`,
+          evidence_tool: null,
+          source: "fixture release workflow",
+          equivalent_commands: [],
+          environment_required: true,
+          gap_policy: "waiting_environment",
+          environment_kind: "external_service",
+          blocking_scope: scope,
         },
       ],
     };
@@ -208,6 +319,12 @@ if (plannerProcessFailure) {
   if (nodeKind === "implementation" && !unprovenCapabilityAttempt) {
     await writeFile(path.join(workspace, "graph-output.txt"), "implemented by fake Codex\n", "utf8");
     if (scenario === "recovery") await writeFile(path.join(workspace, "fixture.txt"), "changed by fake Codex\n", "utf8");
+    if (scenario === "result-link") {
+      const target = path.join(workspace, "graph-link-target");
+      await mkdir(target, { recursive: true });
+      await writeFile(path.join(target, "payload.txt"), "linked payload\n", "utf8");
+      await symlink(target, path.join(workspace, "graph-link"), process.platform === "win32" ? "junction" : "dir");
+    }
   }
   if (nodeKind === "correction") {
     await writeFile(path.join(workspace, "graph-output.txt"), "corrected by fake Codex\n", "utf8");
@@ -225,37 +342,81 @@ if (plannerProcessFailure) {
     },
   );
   const command = `fake-check ${nodeKind}`;
+  scopedCheckId = scenario === "apply-only-gap"
+    ? "apply-environment"
+    : scenario === "release-only-gap"
+      ? "release-environment"
+      : null;
+  scopedCheckCommand = scopedCheckId ? `fake-check ${scopedCheckId}` : null;
   expectedFailure = (scenario === "correction" && nodeId === "verification-r0") ||
     (scenario === "failed-command-pass" && nodeKind === "verification");
+  const implementationFailure = scenario === "implementation-failure" && nodeKind === "implementation";
   const blockedGate = scenario === "blocked-gate-pass" && nodeKind === "verification";
   const recordedBlocker = scenario === "recorded-blocker" && nodeId === "review-behavior";
   const synthesisOwnerGate = ["synthesis-owner-gate", "deferred-synthesis-owner-gate"].includes(scenario) && nodeKind === "synthesis";
   const deferredSynthesisOwnerGate = scenario === "deferred-synthesis-owner-gate" && nodeKind === "synthesis";
-  const missingSkillEvidence = scenario === "missing-skill-evidence" && nodeKind === "review";
+  const missingSkillEvidence =
+    (scenario === "missing-skill-evidence" && nodeKind === "review") ||
+    (scenario === "missing-skill-evidence-once" && nodeId === "review-behavior" && output.includes("attempt-1"));
   const artifactOnlySupervision = nodeKind === "supervision";
   const supervisionRejection =
-    scenario === "supervision-correction" &&
-    ["planner-supervision", "synthesis-supervision", "implementation-supervision"].includes(nodeId);
+    (scenario === "supervision-correction" &&
+      ["planner-supervision", "synthesis-supervision", "implementation-supervision"].includes(nodeId)) ||
+    (scenario === "planner-no-progress" && nodeId === "planner-supervision") ||
+    (scenario === "implementation-failure" && nodeId === "implementation-supervision");
+  const nodeFailure = expectedFailure || implementationFailure;
   result = {
-    status: recordedBlocker || synthesisOwnerGate || unprovenCapabilityAttempt ? "blocked" : (expectedFailure && scenario !== "failed-command-pass") || supervisionRejection ? "needs_retry" : "completed",
-    gate: blockedGate || unprovenCapabilityAttempt ? "blocked" : (expectedFailure && scenario !== "failed-command-pass") || supervisionRejection ? "fail" : ["verification", "independent_review", "supervision"].includes(nodeKind) ? "pass" : "not_applicable",
+    status: recordedBlocker || synthesisOwnerGate || unprovenCapabilityAttempt ? "blocked" : (nodeFailure && scenario !== "failed-command-pass") || supervisionRejection ? "needs_retry" : "completed",
+    gate: blockedGate || unprovenCapabilityAttempt ? "blocked" : (nodeFailure && scenario !== "failed-command-pass") || supervisionRejection ? "fail" : ["verification", "independent_review", "supervision"].includes(nodeKind) ? "pass" : "not_applicable",
     summary: `${nodeId} completed by the deterministic fixture`,
     skills_applied: missingSkillEvidence ? [] : skills,
     evidence: [{
       claim: `${nodeKind} executed`,
       source: artifactOnlySupervision ? "supplied stage artifact and controller contract" : command,
       kind: artifactOnlySupervision ? "document" : "tool",
+      finding_ids: [],
     }],
-    findings: expectedFailure || supervisionRejection
-      ? [{ id: "FIXTURE-FAIL", severity: "high", title: "Fixture requires correction", evidence: supervisionRejection ? `${nodeId} requested one correction` : "first verification failed", recommended_action: "run correction" }]
+    findings: nodeFailure || supervisionRejection
+      ? [{
+          id: "FIXTURE-FAIL",
+          severity: "high",
+          title: "Fixture requires correction",
+          evidence: supervisionRejection ? `${nodeId} requested one correction` : "first verification failed",
+          recommended_action: "run correction",
+          fingerprint: "fixture-failure",
+          related_finding_ids: [],
+          evidence_anchors: [command],
+          validation: "reproduced",
+          disposition: "confirmed",
+        }]
       : [],
     commands: artifactOnlySupervision || unprovenCapabilityAttempt
       ? []
-      : [{ command, exit_code: expectedFailure ? 1 : 0, summary: expectedFailure ? "fixture command failed" : "fixture command passed" }],
+      : [
+          { command, exit_code: nodeFailure ? 1 : 0, summary: nodeFailure ? "fixture command failed" : "fixture command passed" },
+          ...(scopedCheckCommand
+            ? [{ command: scopedCheckCommand, exit_code: 1, summary: "external environment unavailable" }]
+            : []),
+        ],
     checks: nodeKind === "verification"
-      ? [{ id: "fixture-verification", status: expectedFailure ? "fail" : "pass", evidence: command, command }]
+      ? [
+          { id: "fixture-verification", status: expectedFailure ? "fail" : "pass", evidence: command, command, finding_ids: [] },
+          ...(["release-only-gap", "apply-only-gap"].includes(scenario)
+             ? [{
+                 id: scopedCheckId,
+                 status: "fail",
+                 evidence: `${scenario === "apply-only-gap" ? "apply" : "release"} environment unavailable`,
+                 command: scopedCheckCommand,
+                 finding_ids: [],
+               }]
+            : []),
+        ]
       : [],
-    files_changed: ["implementation", "correction"].includes(nodeKind) && !unprovenCapabilityAttempt ? ["graph-output.txt"] : [],
+    files_changed: ["implementation", "correction"].includes(nodeKind) && !unprovenCapabilityAttempt
+      ? scenario === "result-link" && nodeKind === "implementation"
+        ? ["graph-output.txt", "graph-link-target/payload.txt", "graph-link"]
+        : ["graph-output.txt"]
+      : [],
     blockers: unprovenCapabilityAttempt
       ? [
           { type: "SCOPE", reason: "The current implementation file system is read-only.", unblock_condition: "Retry in a workspace-write implementation node." },
@@ -376,22 +537,32 @@ if (nodeProcessFailure) {
   process.stdout.write(`${JSON.stringify({ type: "error", message: "fixture node process failure" })}\n`);
   process.exitCode = 1;
 } else if (!plannerProcessFailure) {
+  assertSchemaFixture(result, JSON.parse(await readFile(schema, "utf8")));
   await mkdir(path.dirname(output), { recursive: true });
   await writeFile(output, `${JSON.stringify(result)}\n`, "utf8");
   process.stdout.write(`${JSON.stringify({ type: "thread.started", thread_id: `fake-${nodeId}` })}\n`);
   if (nodeKind !== "supervision") {
-    process.stdout.write(
-      `${JSON.stringify({
-        type: "item.completed",
-        item: {
-          type: "command_execution",
-          command: `fake-check ${nodeKind}`,
-          exit_code: expectedFailure ? 1 : 0,
-          status: expectedFailure ? "failed" : "completed",
-          aggregated_output: expectedFailure ? "fixture command failed" : "fixture command passed",
-        },
-      })}\n`,
-    );
+    const commandEvents = [
+      {
+        command: `fake-check ${nodeKind}`,
+        exit_code: expectedFailure ? 1 : 0,
+        status: expectedFailure ? "failed" : "completed",
+        aggregated_output: expectedFailure ? "fixture command failed" : "fixture command passed",
+      },
+      ...(scopedCheckCommand
+        ? [{
+            command: scopedCheckCommand,
+            exit_code: 1,
+            status: "failed",
+            aggregated_output: "external environment unavailable",
+          }]
+        : []),
+    ];
+    for (const commandEvent of commandEvents) {
+      process.stdout.write(
+        `${JSON.stringify({ type: "item.completed", item: { type: "command_execution", ...commandEvent } })}\n`,
+      );
+    }
   }
   if (["implementation", "correction"].includes(nodeKind) && !unprovenCapabilityAttempt) {
     process.stdout.write(`${JSON.stringify({ type: "item.completed", item: { type: "file_change", status: "completed" } })}\n`);

@@ -1,0 +1,8 @@
+evals/results/
+.workbuddy/
+node_modules/
+coverage/
+.tmp/
+*.log
+*.tmp
+.git/

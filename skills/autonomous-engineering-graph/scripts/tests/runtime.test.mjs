@@ -8,6 +8,7 @@ import {
   appendRunEvent,
   budgetDecision,
   budgetSnapshot,
+  buildLoopSummary,
   buildNextActions,
   commandMatches,
   deriveRunOutcome,
@@ -196,6 +197,37 @@ test("run outcome requires audit coverage, assurance, and budget gates", () => {
   }), "completed");
 });
 
+test("review-only outcome does not require a verification gate", () => {
+  assert.equal(deriveRunOutcome({
+    currentStatus: "completed",
+    reviewOnly: true,
+    workItems: [
+      { id: "review", status: "succeeded" },
+      { id: "independent-review", status: "succeeded" },
+    ],
+    requiredChecksPass: false,
+    independentReviewPass: true,
+    requiredDomainsComplete: true,
+    assurancePass: true,
+    budgetPass: true,
+  }), "completed");
+});
+
+test("loop summary counts the static review-only independent review", () => {
+  const summary = buildLoopSummary({
+    run: {
+      plan: { mode: "review" },
+      node_order: ["discovery", "synthesis", "synthesis-supervision", "independent-review"],
+      nodes: {
+        "independent-review": { status: "completed", gate: "pass", kind: "independent_review" },
+      },
+      loop_phase: "review_done",
+    },
+  });
+  assert.equal(summary.independent_review_rounds, 1);
+  assert.equal(summary.final_phase, "review_done");
+});
+
 test("run budget uses observed attempts and blocks unknown usage before another call", () => {
   const budget = {
     version: 1,
@@ -241,6 +273,24 @@ test("run budget permits one finite token overrun but never a second call at the
   assert.equal(budgetDecision({ budget, snapshot }).allowed, false);
   assert.equal(budgetDecision({ budget, snapshot }).reason, "tokens_exhausted");
   assert.equal(budgetDecision({ budget, snapshot, allowCompletedOverrun: true }).allowed, true);
+});
+
+test("run budget accounts active reservations before admitting another model call", () => {
+  const budget = { version: 1, profile: "default", max_tokens: 100, max_minutes: 10, max_attempts: 5, max_cost_usd: null };
+  const snapshot = budgetSnapshot({
+    budget,
+    attempts: [{ attempt: 1, process_succeeded: true, duration_ms: 1, usage: { input_tokens: 40, output_tokens: 0 } }],
+    reservations: {
+      "review-a:1": { node_id: "review-a", attempt: 1, tokens: 60, status: "active" },
+    },
+  });
+  assert.equal(snapshot.observed_tokens, 40);
+  assert.equal(snapshot.reserved_tokens, 60);
+  assert.equal(snapshot.available_tokens, 0);
+  assert.equal(snapshot.reserved_attempts, 1);
+  const decision = budgetDecision({ budget, snapshot });
+  assert.equal(decision.allowed, false);
+  assert.equal(decision.reason, "tokens_reserved");
 });
 
 test("run budget preserves history while an increased resume limit is accepted", () => {
@@ -304,6 +354,41 @@ test("evidence verifier accepts a PowerShell wrapper and rejects a failed host c
     assert.equal(unknown.pass, false, `exit_code=${String(exitCode)} must not prove success`);
     assert.equal(unknown.checks[0].status, "missing");
   }
+});
+
+test("evidence verifier accepts the macOS zsh login-shell wrapper", () => {
+  assert.equal(commandMatches("npm test", "/bin/zsh -lc 'npm test'"), true);
+  assert.equal(commandMatches("npm run build", "zsh -lc \"npm run build\""), true);
+  assert.equal(commandMatches("npm test", "/bin/zsh -lc 'npm test && npm run exfiltrate'"), false);
+
+  const evaluation = evaluateRequiredChecks([
+    { id: "tests", command: "npm test", description: "repository tests" },
+  ], {
+    commands: [{ command: "/bin/zsh -lc 'npm test'", exit_code: 0 }],
+    claims: [{ id: "tests", status: "pass", evidence: "3 tests passed" }],
+  });
+  assert.equal(evaluation.pass, true);
+  assert.equal(evaluation.checks[0].status, "pass");
+});
+
+test("evidence verifier can satisfy a copy-mode Git check from the source snapshot", () => {
+  const evaluation = evaluateRequiredChecks([
+    {
+      id: "git-state",
+      description: "Record source repository Git state",
+      command: null,
+      source_evidence: "source_git_snapshot",
+      blocking_scope: "both",
+    },
+  ], {
+    sourceGit: {
+      available: true,
+      observed_at: "2026-08-27T00:00:00.000Z",
+    },
+  });
+  assert.equal(evaluation.pass, true);
+  assert.equal(evaluation.checks[0].status, "pass");
+  assert.equal(evaluation.checks[0].observed_source, "source_git_snapshot");
 });
 
 test("evidence verifier requires exact commands and does not trust check ids alone", () => {
@@ -373,4 +458,20 @@ test("next actions give executable routes for application and release gaps", () 
     },
   });
   assert.match(resumable[0], /resume the exact run partial-run/i);
+});
+
+test("review-only next actions classify verification as deferred coverage", () => {
+  const actions = buildNextActions({
+    run: {
+      run_id: "review-run",
+      status: "completed",
+      plan: { mode: "review", required_checks: [] },
+    },
+    coverage: {
+      verification_gaps: [{ id: "device-check", description: "Validate a real device", next_action: "Connect a device later." }],
+      domains: [],
+    },
+  });
+  assert.match(actions[0], /review-only.*deferred/i);
+  assert.doesNotMatch(actions[0], /unresolved|review error/i);
 });

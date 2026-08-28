@@ -14,13 +14,33 @@ Develop in this repository. Do not patch globally installed Skill copies directl
 
 ## Required Checks
 
-```powershell
+```bash
 npm test
 npm run test:eval
 npm run validate
+npm run validate:package
+npm run test:package-smoke
 ```
 
 When retained lifecycle references change, update their source copies and `specialist-pack.json` hashes together. The validator must pass before installation.
+
+## NPM Release Preparation
+
+The public package is intentionally limited to the runner, bundled Skills,
+runtime references, and user-facing documentation. Source-only evaluation and
+smoke tooling stays in GitHub. Before a release, run:
+
+```bash
+npm run validate:package
+npm run test:package-smoke
+npm run release:check
+```
+
+`release:check` must be `ready` before publishing. It verifies the real GitHub
+repository metadata, placeholder-free public docs, the explicit
+`graph-engineering-install` bin, and the final tarball boundary. The
+`prepublishOnly` hook runs the same check; no npm lifecycle hook silently edits
+the user's `~/.codex/skills` directory.
 
 ## Installation Testing
 

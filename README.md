@@ -1,8 +1,51 @@
 # Graph Engineering
 
-Graph Engineering is a durable multi-agent workflow for explicitly approved repository engineering. One approved project goal becomes a persisted graph of planning, stage supervision, discovery, specialist review, synthesis, implementation, verification, and fresh independent review.
+> A Mac-first, evidence-driven control plane for long-running multi-agent repository work.
+
+Graph Engineering turns one explicitly approved project goal into a persisted graph of planning, stage supervision, discovery, specialist review, synthesis, implementation, verification, and fresh independent review. It is designed for work where one conversational agent is not enough: the run needs bounded capacity, isolated execution, resumability, machine-observed evidence, and an honest final state.
 
 It is a standalone project. The installable Skills are the user-facing entry point; the runner, tests, evaluation harness, and release tooling live here as the source of truth.
+
+## Give This Repository to Your Agent
+
+The simplest onboarding path is agent-first: copy this GitHub repository URL into
+your coding Agent and ask it to install Graph Engineering on the current Mac.
+The Agent can inspect the repository, check prerequisites, run the installer, and
+report any environment gap without requiring the user to understand the runtime
+layout.
+
+Use this prompt after pasting the repository URL:
+
+~~~text
+Please install Graph Engineering from the repository URL above on this Mac.
+
+1. Read README.md, AGENTS.md if present, CONTRIBUTING.md, and SECURITY.md.
+2. Check that Node.js is 20 or newer, and check whether Codex CLI or Claude Code CLI is installed and authenticated.
+3. Clone the repository if it is not already available locally.
+4. Run npm run install:global from the repository root.
+5. Run graph-engineering validate and the appropriate graph-engineering doctor --agent-backend codex --json or --agent-backend claude --json check.
+6. Do not publish to NPM, push to GitHub, modify another project, or start a real Graph Run without my explicit approval.
+7. Report exactly what was installed, which checks passed, and any remaining waiting_environment or waiting_budget condition.
+~~~
+
+The Agent should show the exact paths and commands it used. Installation is an
+explicit local setup action; it does not grant permission to run Graph against a
+project or to apply any generated change.
+
+## Why Use Graph
+
+A single Agent can often produce a patch. Graph is for the harder cases where
+the process itself must be inspectable:
+
+- a long run can pause and resume from persisted checkpoints;
+- model calls are admitted against a Run-level budget before they start;
+- specialist reviews can run in parallel while completed work remains visible;
+- isolated workspaces keep review and repair away from the source tree by default;
+- independent review, command evidence, hashes, and lifecycle events make the final claim auditable.
+
+These are control-plane guarantees and design goals, not proof that Graph always
+finds more defects or uses fewer tokens. See [docs/marketing-kit.md](docs/marketing-kit.md)
+for the evidence model, demo script, metrics, and ready-to-use launch copy.
 
 ## What Version 3 Adds
 
@@ -27,24 +70,75 @@ It is a standalone project. The installable Skills are the user-facing entry poi
 - read-only `preview`, `diff`, `runs`, and `gc` operations, transactional `apply --dry-run` and selective `--file`, plus saved-check `recheck`;
 - sparse event-log head/index metadata, lazy legacy metadata rebuild, and explicit storage retention rules;
 - monorepo-root snapshots with scoped execution cwd and Node, Python, Go, Rust, Java, and .NET preflight detection.
+- `--mode review` for a genuinely read-only assessment graph that stops after independent review and never produces an applicable result;
+- copy-mode source Git provenance, so a copied execution workspace can satisfy the launch-time Git-state check from a recorded source snapshot without probing the user's repository during node execution.
 
 Graph is explicit opt-in. It starts only when the current task names Graph Engineering or accepts a concrete Graph recommendation. Task size, review scope, multiple files, autonomous wording, and approval from another task never select it automatically; ordinary repository work stays in the current task. The host records that current approval with `--user-approved`, which does not authorize protected mutations. The runner does not commit, push, deploy, publish, restart devices, or perform irreversible data operations on its own.
 
-## Requirements
+## Requirements (macOS)
 
+- macOS; the current supported target is Mac, with primary validation on Apple Silicon
 - Node.js 20 or newer
-- Codex CLI or Claude Code CLI
-- Git-root paths use worktree isolation; non-Git and nested folders use safe copy isolation
+- Codex CLI or Claude Code CLI, installed and authenticated separately
+- Git is recommended for repository history and worktree isolation; non-Git and nested folders can use safe copy isolation
+- The target repository's own toolchain (for example Java/Android SDK, Node, Go, or Rust) only when its requested checks need it
 
-## Install
+Graph has no separate Python package, database, daemon, or model SDK to install.
+The model work is performed by the selected Codex or Claude CLI. package.json
+has no runtime dependencies; the installer and runner use Node's standard library.
 
-```powershell
+## Install on macOS
+
+```bash
+# If the repository is not already on disk:
+git clone https://github.com/aabbcdl/graph-engineering.git
+cd graph-engineering
+
+# No separate npm install is required for the current zero-runtime-dependency package.
 npm run install:global
 graph-engineering validate
+graph-engineering doctor --agent-backend codex --json
 ```
 
-The installer refuses to replace a live Graph runtime. Every runner registers outside its per-run state root, so custom `--state-root` runs remain visible to this gate. The installer stages and validates all eight Skills and launchers, swaps them in one rollback boundary, and restores both the prior Skills and launchers if the update fails.
-It writes both PowerShell and CMD launchers to the configured npm global binary directory; `--bin-dir` can override that destination.
+The installer copies the bundled Skills into ~/.codex/skills and writes the
+graph-engineering launcher into the global npm binary directory. It refuses to
+replace a live Graph runtime, stages and validates all eight Skills, swaps them
+in one rollback boundary, and restores the previous Skills and launcher if the
+update fails. `--codex-home`, `--bin-dir`, and `--state-root` can be supplied to the
+installer when a different local layout is intentional.
+
+The GitHub repository is the canonical source. This release also provides an
+NPM installation shortcut:
+
+~~~bash
+npm install -g graph-engineering
+graph-engineering-install
+~~~
+
+The package provides the explicit `graph-engineering-install` command; it must
+not silently mutate ~/.codex/skills from an npm postinstall hook. The installer
+is deliberately separate from the runtime CLI so an npm upgrade can be inspected
+before it replaces the user-level Skills.
+
+### Windows is not required for the Mac workflow
+
+The Windows smoke commands below document a separate compatibility gate. They
+are not prerequisites for Mac users and are not part of the current Mac release
+claim.
+
+On Windows, validate the selected backend's sandbox before the first real Run:
+
+```powershell
+npm run test:windows-codex-readonly-smoke
+npm run test:windows-codex-write-smoke
+graph-engineering doctor --agent-backend codex --json
+```
+
+Run the matching Claude read-only and writer probes before selecting Claude.
+The doctor must report `ready`; an installed but unprobed CLI is intentionally
+not treated as task-ready. Until those probes exist, `validate`/`doctor` may
+exit with code 2 and list the missing sandbox records; that is a readiness
+diagnostic, not a package-install failure.
 
 ## Start One Approved Run
 
@@ -59,6 +153,18 @@ graph-engineering submit `
 ```
 
 `submit` reports only after the child confirms startup and ownership with `handoff: confirmed`. `--follow` then keeps the invoking task attached to a read-only progress stream until completion, failure, a service pause, or an owner decision. It uses no model capacity and detaching it does not stop the background runner. Version 3 defaults to `--workspace-mode auto` and `--supervision stage`.
+
+For a static assessment before any repair or runtime probe, select review mode explicitly:
+
+```bash
+graph-engineering start \
+  --workspace "/path/to/project" \
+  --goal "Review the repository for macOS compatibility gaps" \
+  --mode review \
+  --user-approved
+```
+
+Review mode runs discovery, specialist reviews, synthesis, synthesis supervision, and a fresh independent review in read-only sandboxes. It does not prepare dependencies, run implementation or correction nodes, execute runtime/device/release checks, or export an applyable result. Any deferred environment coverage is reported as deferred coverage rather than as a review failure. `--minimal` does not override this safety property.
 
 ## Preview, Diff, Apply, And Recheck
 
@@ -98,6 +204,19 @@ verifiable `--pricing-file` can price every call. Missing usage or cost pauses
 before another model call as `waiting_budget`; resume may increase limits but
 cannot erase historical consumption.
 
+Model admission is run-scoped. Before a model process starts, Graph records a
+bounded token reservation and calculates new capacity from observed usage plus
+active reservations. A node that cannot reserve capacity waits as
+`waiting_budget`; it does not start an unreserved call. A call that has already
+started may finish with a bounded terminal overrun, so this is not a promise of
+zero overshoot. `budget_exceeded` is normalized to a budget termination, is not
+treated as an ordinary worker failure, and is not automatically retried. The
+first budget termination, user stop, or host interruption cancels unfinished
+siblings in the same review wave; completed nodes remain preserved. Reservation
+records and `RunBudgetReserved`/`RunBudgetReservationReleased`/
+`RunBudgetReservationsReclaimed` events make this visible, and resume reclaims
+reservations that have no corresponding live process.
+
 `--assurance auto` uses `standard` for ordinary tasks and `high` for audits or
 release checks. High assurance requires a different backend or an explicitly
 different model for independent review; otherwise the Run remains
@@ -113,8 +232,60 @@ it are recorded as `OUT_OF_SCOPE_WRITE` and make the result ineligible.
 
 Preflight detects trusted lock inputs for Node, Python, Go, Rust, Java, and
 .NET. Missing or ambiguous lock inputs are explicit environment gaps; Graph
-does not guess an install command. Preparation that may execute project code
-is isolated and lifecycle scripts are disabled by default.
+does not guess an install command. A Go module with no external `require`
+entries is standard-library-only and does not need a synthetic `go.sum`.
+Every preflight record separates inspection `status` from `readiness`/`ready`,
+so a successful scan cannot be mistaken for an executable environment.
+When inspection succeeds but `ready=false`, Graph records a
+`WORKSPACE_ENVIRONMENT_GAP` before the planner or any model call. Correct the
+dependency inputs in the source workspace and start a new Run; the blocked
+Run retains its frozen not-ready snapshot as evidence.
+Preparation that may execute project code is isolated and lifecycle scripts
+are disabled by default.
+
+Each Run also writes a deterministic `workspace-module-map.json` for repository
+orientation. Android/Gradle entries include declared modules, module paths,
+source/test directories, manifests, declared tasks, and missing modules;
+Node entries include bounded package, lockfile, backend-candidate, and script
+metadata. Planner and review prompts use a bounded focus-ranked context from
+this map, which reduces repeated whole-repository browsing. The map is
+orientation evidence only: exact snapshots remain unchanged, no new automatic
+exclusion of `build`, `.gradle`, `node_modules`, or local configuration is
+introduced, and fail-closed submodule handling remains in place. There is no
+public `--submodules separate` mode in this phase.
+
+Android/Gradle machine checks are opt-in. `--machine-preflight` performs only
+static declaration/path checks and records `machine-preflight.json`; it does not
+execute Gradle. `--machine-preflight-gradle` additionally runs the wrapper's
+`projects` command and bounded planned-task `--dry-run` probes in the isolated
+execution workspace with a filtered environment and a private Gradle user home.
+Gradle configuration code therefore executes only when explicitly requested;
+full tests, device actions, and publish/deploy commands are never part of this
+probe. Every command records cwd, argv, exit code, timing, output, and before /
+after surface evidence. `not_requested` and `not_run` mean that a probe did not
+execute; they are not reported as command failures. A declared missing module,
+such as KopiAI's `screenshot-demo` when absent, is reported by the static map
+before model review.
+
+Examples:
+
+```bash
+graph-engineering start --workspace "/path/to/repository" \
+  --goal "Review the Android module layout" --mode review \
+  --machine-preflight --user-approved
+
+graph-engineering start --workspace "/path/to/repository" \
+  --goal "Review the Android module layout" --mode review \
+  --machine-preflight-gradle --user-approved
+```
+
+On Windows, a real Run requires the selected agent backend to have current
+read-only and workspace-write smoke records bound to the runner hash, the
+resolved agent command's content SHA-256, and any prefixed CLI script files.
+Run `graph-engineering doctor --json` after the
+protected smoke workflow; an unverified backend is blocked before a Run or
+model call is created. `preview` infers audit goals and shows the four-domain
+audit floor and high-assurance routing without creating state.
 
 For a deliberately smaller, cost-bounded run (for example, a pilot on a small
 fixture), set `--max-review-nodes <1-6>`. The default remains `6` for broad
@@ -202,7 +373,17 @@ Use `codex.planner=<model>` or `claude.planner=<model>` when names differ by bac
 
 Do not claim that Graph finds or fixes more defects from one run. The paired harness freezes one fixture, gives independent copies to Graph and a single-agent baseline, enforces matching goal/model/effort/budget declarations, rejects budget overruns, and reports paired 95% intervals. At least five complete comparable pairs are required before any fixture-scoped performance statement is allowed.
 
-See [docs/usage.md](docs/usage.md), [docs/architecture.md](docs/architecture.md), and [evals/README.md](evals/README.md).
+Windows compatibility remains an external gate. Until the protected Codex /
+Claude read-only and workspace-write smokes run on a real Windows host, the
+status is `UNKNOWN`/`waiting_environment`; Mac-side preparation is not Windows
+evidence. Likewise, no claim that Graph saves tokens or improves effectiveness
+is allowed until at least five complete paired evaluations bind the same
+fixture, goal, model, effort, and budget.
+
+See [docs/usage.md](docs/usage.md) and [docs/architecture.md](docs/architecture.md).
+The paired evaluation harness is maintained in the source checkout under
+`evals/`; it is deliberately excluded from the npm package and is not an
+installed runtime command.
 
 ## Why The Control Plane Changed
 
@@ -230,7 +411,7 @@ and [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
 ## Development
 
-```powershell
+```bash
 npm test
 npm run test:eval
 npm run validate
@@ -239,6 +420,10 @@ npm run test:package-smoke
 ```
 
 Repository tests use deterministic fake agent processes and do not spend model quota.
+The package smoke installs the generated tarball and exercises `help`, `preview`,
+`doctor`, and `validate` through npm's public bin shim with an isolated temporary
+`CODEX_HOME`. Validation must discover the seven bundled planning specialists;
+the control-plane Skill itself is intentionally excluded from node selection.
 
 On Windows, run the opt-in real-agent smoke tests after changing agent invocation or sandbox handling:
 
@@ -248,15 +433,21 @@ $env:AEG_WRITE_SMOKE_BACKEND = "claude"
 npm run test:windows-write-smoke
 Remove-Item Env:AEG_WRITE_SMOKE_BACKEND
 npm run test:windows-claude-sandbox-smoke
+npm run test:windows-codex-readonly-smoke
 npm run test:windows-codex-write-smoke
 npm run test:windows-claude-write-smoke
 ```
 
-Each command creates one temporary Git repository, makes one small real model call, and removes only that exact temporary directory with bounded Windows sharing retries. The default write probe invokes Codex with Graph's isolated `workspace-write` arguments and requires a native patch and read-back. Graph preserves the configured `[windows].sandbox` implementation because omitting it can silently turn a nominal writer into a read-only process. Claude attempts use a runner-generated native sandbox settings file with fail-closed startup. The Claude writer and read-only denial probes must both pass before Windows automatic fallback may select Claude; the capability record is bound to the current Graph runner and Claude binary. Explicit Claude selection remains available and fails closed when the native sandbox is unavailable.
+Each command creates one temporary Git repository, makes one small real model call, and removes only that exact temporary directory with bounded Windows sharing retries. The read-only probe must pass before the writer probe is meaningful. The default write probe invokes Codex with Graph's isolated `workspace-write` arguments and requires a native patch and read-back. Graph preserves the configured `[windows].sandbox` implementation because omitting it can silently turn a nominal writer into a read-only process. Claude attempts use a runner-generated native sandbox settings file with fail-closed startup. The Claude writer and read-only denial probes must both pass before Windows automatic fallback may select Claude; the capability record is bound to the current Graph runner and Claude binary. Explicit Claude selection remains available and fails closed when the native sandbox is unavailable.
 
 ## Status
 
-Version `0.3.0` is suitable for local evaluation and controlled repository work. Production automation still depends on the reliability and permissions of the configured agent CLIs and model services. The protected Windows real-agent workflow is manual/nightly only and is not part of ordinary pull-request model spend.
+Version `0.3.0` is suitable for controlled local repository work. The source
+checkout also contains a separate paired-evaluation harness, but the npm
+artifact is only the installable control plane. Production automation still
+depends on the reliability and permissions of the configured agent CLIs and
+model services. The protected Windows real-agent workflow is manual/nightly
+only and is not part of ordinary pull-request model spend.
 
 ## License
 

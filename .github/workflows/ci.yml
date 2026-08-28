@@ -8,20 +8,41 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  runtime-regression:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # The Windows integration suite launches many isolated child processes and
+    # can legitimately take longer than the package/evaluation checks below.
+    # Keep its budget explicit instead of letting the combined job expire with
+    # no indication which gate consumed the time.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
       - run: npm test
+
+  contract-and-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.0"
       - run: npm run test:eval
       - run: npm run validate
       - run: npm run validate:package
       - run: npm run test:package-smoke
+      - run: git diff --check

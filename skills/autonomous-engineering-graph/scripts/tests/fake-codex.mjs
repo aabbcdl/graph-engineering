@@ -76,9 +76,22 @@ let prompt = "";
 for await (const chunk of process.stdin) prompt += chunk;
 
 const schema = optionValue("--output-schema");
+const inlineSchema = optionValue("--json-schema");
+const claudeMode = Boolean(inlineSchema) && !schema;
 const output = optionValue("--output-last-message");
-const workspace = optionValue("--cd") || process.cwd();
-if (!schema || !output) throw new Error("Fake Codex requires schema and output paths");
+const workspace = optionValue("--cd") || optionValue("--add-dir") || process.cwd();
+if ((!schema && !inlineSchema) || (!claudeMode && !output)) {
+  throw new Error("Fake agent requires a schema and the backend-specific output paths");
+}
+const schemaDefinition = claudeMode
+  ? JSON.parse(inlineSchema)
+  : JSON.parse(await readFile(schema, "utf8"));
+const schemaLabel = schema
+  ? path.basename(schema)
+  : schemaDefinition?.properties?.task_summary
+    ? "planner-result.schema.json"
+    : "node-result.schema.json";
+const attemptMarker = output || "";
 if (process.argv.filter((argument) => argument === "--model").length > 1) {
   process.stderr.write("fixture received duplicate --model arguments\n");
   process.exit(92);
@@ -135,12 +148,12 @@ let unprovenCapabilityAttempt = false;
 let scopedCheckId = null;
 let scopedCheckCommand = null;
 const plannerProcessFailure =
-  path.basename(schema) === "planner-result.schema.json" &&
+  schemaLabel === "planner-result.schema.json" &&
   (
     scenario === "planner-always-fails" ||
-    (scenario === "planner-transient" && output.includes("attempt-1")) ||
-    (scenario === "planner-transient-twice" && /attempt-[12]/.test(output)) ||
-    (scenario === "planner-transient-three-checkpoint" && /attempt-[123]/.test(output))
+    (scenario === "planner-transient" && attemptMarker.includes("attempt-1")) ||
+    (scenario === "planner-transient-twice" && /attempt-[12]/.test(attemptMarker)) ||
+    (scenario === "planner-transient-three-checkpoint" && /attempt-[123]/.test(attemptMarker))
   );
 if (plannerProcessFailure) {
   if (scenario === "planner-transient-three-checkpoint") {
@@ -168,7 +181,7 @@ if (plannerProcessFailure) {
   process.stdout.write(`${JSON.stringify({ type: "error", message: "502 Bad Gateway" })}\n`);
   process.stdout.write(`${JSON.stringify({ type: "turn.failed", error: { message: "502 Bad Gateway" } })}\n`);
   process.exitCode = 1;
-} else if (path.basename(schema) === "planner-result.schema.json") {
+} else if (schemaLabel === "planner-result.schema.json") {
   const plannerHoldMs = Number.parseInt(process.env.AEG_FAKE_PLANNER_HOLD_MS || "0", 10);
   if (plannerHoldMs > 0) await new Promise((resolve) => setTimeout(resolve, plannerHoldMs));
   if (scenario === "planner-source-mutation") {
@@ -214,6 +227,26 @@ if (plannerProcessFailure) {
     result = {
       ...result,
       completion_criteria: [...result.completion_criteria, "planner supervision feedback is explicitly addressed"],
+    };
+  }
+  if (scenario === "source-git-check") {
+    result = {
+      ...result,
+      required_checks: [
+        ...result.required_checks,
+        {
+          id: "git-state",
+          description: "Confirm the source repository Git state",
+          command: "git status --short",
+          evidence_tool: null,
+          source: "fixture repository rules",
+          equivalent_commands: [],
+          environment_required: false,
+          gap_policy: "fail",
+          environment_kind: null,
+          blocking_scope: "both",
+        },
+      ],
     };
   }
   if (scenario === "specialist-routing") {
@@ -310,12 +343,12 @@ if (plannerProcessFailure) {
   nodeId = match?.[1] || "unknown";
   nodeKind = match?.[2] || "review";
   nodeTransientFailure =
-    (scenario === "node-transient-twice" && nodeId === "review-risk" && /attempt-[12]/.test(output)) ||
-    (scenario === "node-transient-three-checkpoint" && nodeId === "discovery" && /attempt-[123]/.test(output));
+    (scenario === "node-transient-twice" && nodeId === "review-risk" && /attempt-[12]/.test(attemptMarker)) ||
+    (scenario === "node-transient-three-checkpoint" && nodeId === "discovery" && /attempt-[123]/.test(attemptMarker));
   nodeProcessFailure =
     ((scenario === "node-always-fails" && nodeId === "review-risk") || nodeTransientFailure);
   unprovenCapabilityAttempt =
-    scenario === "unproven-capability-blocker" && nodeKind === "implementation" && output.includes("attempt-1");
+    scenario === "unproven-capability-blocker" && nodeKind === "implementation" && attemptMarker.includes("attempt-1");
   if (nodeKind === "implementation" && !unprovenCapabilityAttempt) {
     await writeFile(path.join(workspace, "graph-output.txt"), "implemented by fake Codex\n", "utf8");
     if (scenario === "recovery") await writeFile(path.join(workspace, "fixture.txt"), "changed by fake Codex\n", "utf8");
@@ -357,7 +390,7 @@ if (plannerProcessFailure) {
   const deferredSynthesisOwnerGate = scenario === "deferred-synthesis-owner-gate" && nodeKind === "synthesis";
   const missingSkillEvidence =
     (scenario === "missing-skill-evidence" && nodeKind === "review") ||
-    (scenario === "missing-skill-evidence-once" && nodeId === "review-behavior" && output.includes("attempt-1"));
+    (scenario === "missing-skill-evidence-once" && nodeId === "review-behavior" && attemptMarker.includes("attempt-1"));
   const artifactOnlySupervision = nodeKind === "supervision";
   const supervisionRejection =
     (scenario === "supervision-correction" &&
@@ -537,42 +570,95 @@ if (nodeProcessFailure) {
   process.stdout.write(`${JSON.stringify({ type: "error", message: "fixture node process failure" })}\n`);
   process.exitCode = 1;
 } else if (!plannerProcessFailure) {
-  assertSchemaFixture(result, JSON.parse(await readFile(schema, "utf8")));
-  await mkdir(path.dirname(output), { recursive: true });
-  await writeFile(output, `${JSON.stringify(result)}\n`, "utf8");
-  process.stdout.write(`${JSON.stringify({ type: "thread.started", thread_id: `fake-${nodeId}` })}\n`);
-  if (nodeKind !== "supervision") {
-    const commandEvents = [
-      {
-        command: `fake-check ${nodeKind}`,
-        exit_code: expectedFailure ? 1 : 0,
-        status: expectedFailure ? "failed" : "completed",
-        aggregated_output: expectedFailure ? "fixture command failed" : "fixture command passed",
-      },
-      ...(scopedCheckCommand
-        ? [{
-            command: scopedCheckCommand,
-            exit_code: 1,
-            status: "failed",
-            aggregated_output: "external environment unavailable",
-          }]
-        : []),
-    ];
-    for (const commandEvent of commandEvents) {
+  assertSchemaFixture(result, schemaDefinition);
+  const commandEvents = [
+    {
+      command: `fake-check ${nodeKind}`,
+      exit_code: expectedFailure ? 1 : 0,
+      status: expectedFailure ? "failed" : "completed",
+      aggregated_output: expectedFailure ? "fixture command failed" : "fixture command passed",
+    },
+    ...(scopedCheckCommand
+      ? [{
+          command: scopedCheckCommand,
+          exit_code: 1,
+          status: "failed",
+          aggregated_output: "external environment unavailable",
+        }]
+      : []),
+  ];
+  if (!claudeMode) {
+    await mkdir(path.dirname(output), { recursive: true });
+    await writeFile(output, `${JSON.stringify(result)}\n`, "utf8");
+    process.stdout.write(`${JSON.stringify({ type: "thread.started", thread_id: `fake-${nodeId}` })}\n`);
+    if (nodeKind !== "supervision") {
+      for (const commandEvent of commandEvents) {
+        process.stdout.write(
+          `${JSON.stringify({ type: "item.completed", item: { type: "command_execution", ...commandEvent } })}\n`,
+        );
+      }
+    }
+    if (["implementation", "correction"].includes(nodeKind) && !unprovenCapabilityAttempt) {
+      process.stdout.write(`${JSON.stringify({ type: "item.completed", item: { type: "file_change", status: "completed" } })}\n`);
+    }
+    process.stdout.write(
+      `${JSON.stringify({
+        type: "turn.completed",
+        usage: { input_tokens: 120, cached_input_tokens: 40, output_tokens: 30 },
+      })}\n`,
+    );
+  } else {
+    process.stdout.write(`${JSON.stringify({ type: "system", subtype: "init", session_id: `fake-${nodeId}` })}\n`);
+    let toolNumber = 0;
+    if (nodeKind !== "supervision") {
+      for (const commandEvent of commandEvents) {
+        const toolId = `fake-call-${toolNumber++}`;
+        process.stdout.write(
+          `${JSON.stringify({
+            type: "assistant",
+            message: { content: [{ type: "tool_use", id: toolId, name: "Bash", input: { command: commandEvent.command } }] },
+          })}\n`,
+        );
+        process.stdout.write(
+          `${JSON.stringify({
+            type: "user",
+            message: {
+              content: [{
+                type: "tool_result",
+                tool_use_id: toolId,
+                is_error: commandEvent.exit_code !== 0,
+                content: commandEvent.aggregated_output,
+              }],
+            },
+          })}\n`,
+        );
+      }
+    }
+    if (["implementation", "correction"].includes(nodeKind) && !unprovenCapabilityAttempt) {
+      const toolId = `fake-call-${toolNumber++}`;
       process.stdout.write(
-        `${JSON.stringify({ type: "item.completed", item: { type: "command_execution", ...commandEvent } })}\n`,
+        `${JSON.stringify({
+          type: "assistant",
+          message: { content: [{ type: "tool_use", id: toolId, name: "Edit", input: { file_path: "graph-output.txt" } }] },
+        })}\n`,
+      );
+      process.stdout.write(
+        `${JSON.stringify({
+          type: "user",
+          message: { content: [{ type: "tool_result", tool_use_id: toolId, is_error: false, content: "fixture file changed" }] },
+        })}\n`,
       );
     }
+    process.stdout.write(
+      `${JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        structured_output: result,
+        usage: { input_tokens: 120, cache_read_input_tokens: 40, output_tokens: 30 },
+      })}\n`,
+    );
   }
-  if (["implementation", "correction"].includes(nodeKind) && !unprovenCapabilityAttempt) {
-    process.stdout.write(`${JSON.stringify({ type: "item.completed", item: { type: "file_change", status: "completed" } })}\n`);
-  }
-  process.stdout.write(
-    `${JSON.stringify({
-      type: "turn.completed",
-      usage: { input_tokens: 120, cached_input_tokens: 40, output_tokens: 30 },
-    })}\n`,
-  );
 }
 
 if (overlapGuard) {

@@ -16,7 +16,11 @@ const goal = (await readFile(argument("--goal-file"), "utf8")).trim();
 const fixture = (await readFile(`${workspace}/fixture.txt`, "utf8")).trim();
 const defectId = argument("--defect-id");
 const expectedHarness = JSON.parse(await readFile(argument("--harness-file"), "utf8"));
-const executionHarness = await harnessIdentity({ manifestSha256: expectedHarness.manifest_sha256 });
+const executionHarness = await harnessIdentity({
+  manifestSha256: expectedHarness.manifest_sha256,
+  budgetContract: expectedHarness.budget_contract || null,
+  toolchain: expectedHarness.toolchain_contract || expectedHarness.toolchain || null,
+});
 if (process.argv.includes("--assert-no-truth")) {
   const outputRoot = path.resolve(path.dirname(output), "..", "..", "..");
   const pairsPath = path.join(outputRoot, "pairs.json");

@@ -102,8 +102,48 @@ function observedTokens(usage) {
   return input + output;
 }
 
-export function budgetSnapshot({ budget, attempts = [], now = Date.now(), activeStartedAtMs = null, activeProcessMs = 0, activeAttempts = 0 } = {}) {
+function activeBudgetReservations(reservations) {
+  const entries = Array.isArray(reservations)
+    ? reservations.map((reservation, index) => [String(reservation?.reservation_id || reservation?.key || index), reservation])
+    : Object.entries(reservations || {});
+  return entries
+    .map(([key, reservation]) => ({ key, reservation }))
+    .filter(({ reservation }) => ["active", "reserved", "running"].includes(String(reservation?.status || "active").toLowerCase()))
+    .map(({ key, reservation }) => ({
+      key,
+      tokens: Number.isFinite(Number(reservation?.tokens)) ? Math.max(0, Math.trunc(Number(reservation.tokens))) : 0,
+      node_id: reservation?.node_id || null,
+      attempt: Number.isInteger(reservation?.attempt) ? reservation.attempt : null,
+    }))
+    .filter((reservation) => reservation.tokens > 0);
+}
+
+export function budgetReservationAmount({ budget, snapshot, slots = 1 } = {}) {
+  const maxTokens = Number(budget?.max_tokens);
+  if (!Number.isFinite(maxTokens)) return null;
+  const observed = Math.max(0, Number(snapshot?.observed_tokens || 0));
+  const reserved = Math.max(0, Number(snapshot?.reserved_tokens || 0));
+  const available = Math.max(0, Math.floor(maxTokens - observed - reserved));
+  if (available <= 0) return 0;
+  const requestedSlots = Number.isFinite(Number(slots)) ? Math.max(1, Math.trunc(Number(slots))) : 1;
+  const activeReservations = Number.isFinite(Number(snapshot?.reserved_attempts))
+    ? Math.max(0, Math.trunc(Number(snapshot.reserved_attempts)))
+    : 0;
+  const remainingSlots = Math.max(1, requestedSlots - activeReservations);
+  return Math.max(0, Math.floor(available / remainingSlots));
+}
+
+export function budgetSnapshot({
+  budget,
+  attempts = [],
+  reservations = [],
+  now = Date.now(),
+  activeStartedAtMs = null,
+  activeProcessMs = 0,
+  activeAttempts = 0,
+} = {}) {
   const records = (attempts || []).filter(attemptIsModelCall);
+  const activeReservations = activeBudgetReservations(reservations);
   const usage = { input_tokens: 0, cached_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 0 };
   let observedTokensTotal = 0;
   let processMs = 0;
@@ -130,10 +170,16 @@ export function budgetSnapshot({ budget, attempts = [], now = Date.now(), active
   const maxTokens = budget?.max_tokens ?? null;
   const maxMinutes = budget?.max_minutes ?? null;
   const maxCostUsd = budget?.max_cost_usd ?? null;
+  const reservedTokens = activeReservations.reduce((total, reservation) => total + reservation.tokens, 0);
+  const availableTokens = maxTokens === null ? null : maxTokens - observedTokensTotal - reservedTokens;
   return {
     version: BUDGET_VERSION,
     attempts: records.length + Math.max(0, Math.trunc(Number(activeAttempts) || 0)),
     observed_tokens: observedTokensTotal,
+    reserved_tokens: reservedTokens,
+    reserved_attempts: activeReservations.length,
+    reserved_ids: activeReservations.map((reservation) => reservation.key),
+    available_tokens: availableTokens,
     usage,
     usage_complete: unknownUsageAttempts === 0,
     unknown_usage_attempts: unknownUsageAttempts,
@@ -160,7 +206,12 @@ export function budgetDecision({ budget, snapshot, allowCompletedOverrun = false
     max_minutes: budget?.max_minutes ?? rawState.max_minutes ?? null,
     max_attempts: budget?.max_attempts ?? rawState.max_attempts ?? null,
     max_cost_usd: budget?.max_cost_usd ?? rawState.max_cost_usd ?? null,
+    reserved_tokens: Math.max(0, Number(rawState.reserved_tokens || 0)),
+    reserved_attempts: Math.max(0, Math.trunc(Number(rawState.reserved_attempts || 0))),
   };
+  state.available_tokens = state.max_tokens === null
+    ? null
+    : state.max_tokens - state.observed_tokens - state.reserved_tokens;
   state.token_overrun = state.max_tokens === null ? 0 : Math.max(0, state.observed_tokens - state.max_tokens);
   state.time_overrun_minutes = state.max_minutes === null ? 0 : Math.max(0, state.process_minutes - state.max_minutes);
   state.cost_overrun_usd = state.max_cost_usd === null || !state.cost_known ? 0 : Math.max(0, state.observed_cost_usd - state.max_cost_usd);
@@ -179,6 +230,9 @@ export function budgetDecision({ budget, snapshot, allowCompletedOverrun = false
     }
     return { allowed: false, status: "waiting_budget", reason: "tokens_exhausted", snapshot: state };
   }
+  if (state.max_tokens !== null && state.observed_tokens + state.reserved_tokens >= state.max_tokens) {
+    return { allowed: false, status: "waiting_budget", reason: "tokens_reserved", snapshot: state };
+  }
   if (state.max_minutes !== null && state.process_minutes >= state.max_minutes) {
     return { allowed: false, status: "waiting_budget", reason: "time_exhausted", snapshot: state };
   }
@@ -191,7 +245,7 @@ export function budgetDecision({ budget, snapshot, allowCompletedOverrun = false
 export function budgetPass({ budget, snapshot } = {}) {
   const decision = budgetDecision({ budget, snapshot, allowCompletedOverrun: true });
   const state = decision.snapshot;
-  if (!state.usage_complete || !state.cost_known) return false;
+  if (!state.usage_complete || !state.cost_known || state.reserved_tokens > 0) return false;
   if (state.time_overrun_minutes > 0 || state.cost_overrun_usd > 0) return false;
   if (state.token_overrun > 0 && state.token_overrun > state.last_attempt_tokens) return false;
   return true;

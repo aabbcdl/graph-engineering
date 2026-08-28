@@ -7,10 +7,17 @@ const SHELL_OPTIONS = new Map([
   ["powershell.exe", ["-command", "-c"]],
   ["pwsh", ["-command", "-c"]],
   ["pwsh.exe", ["-command", "-c"]],
-  ["bash", ["-c"]],
-  ["bash.exe", ["-c"]],
-  ["sh", ["-c"]],
-  ["sh.exe", ["-c"]],
+  // Codex command events on macOS are emitted through `/bin/zsh -lc`.
+  // Keep the accepted forms explicit so shell wrappers remain single-command
+  // evidence and cannot smuggle compound commands into a required check.
+  ["bash", ["-c", "-lc", "-ic", "-ilc", "-lic"]],
+  ["bash.exe", ["-c", "-lc", "-ic", "-ilc", "-lic"]],
+  ["sh", ["-c", "-lc", "-ic", "-ilc", "-lic"]],
+  ["sh.exe", ["-c", "-lc", "-ic", "-ilc", "-lic"]],
+  ["zsh", ["-c", "-lc", "-ic", "-ilc", "-lic"]],
+  ["zsh.exe", ["-c", "-lc", "-ic", "-ilc", "-lic"]],
+  ["fish", ["-c"]],
+  ["fish.exe", ["-c"]],
 ]);
 
 function tokens(command) {
@@ -148,6 +155,7 @@ export function evaluateRequiredChecks(requiredChecks = [], {
   commands = [],
   toolCalls = [],
   claims = [],
+  sourceGit = null,
 } = {}) {
   const claimed = new Map((claims || []).map((item) => [checkId(item), item]));
   const successfulTools = new Set((toolCalls || [])
@@ -156,6 +164,21 @@ export function evaluateRequiredChecks(requiredChecks = [], {
   const checks = (requiredChecks || []).map((required) => {
     const id = checkId(required);
     const claim = claimed.get(id);
+    if (required.source_evidence === "source_git_snapshot") {
+      const pass = sourceGit?.available === true;
+      return {
+        id,
+        status: pass ? "pass" : "missing",
+        blocking_scope: blockingScope(required),
+        environment_required: required.environment_required === true,
+        environment_kind: required.environment_kind || null,
+        evidence: pass
+          ? claim?.evidence || `source Git snapshot observed at ${sourceGit.observed_at || "run launch"}`
+          : claim?.evidence || null,
+        observed_source: pass ? "source_git_snapshot" : null,
+        reason: pass ? "source Git snapshot observed at run launch" : "no source Git snapshot available",
+      };
+    }
     const candidates = [required.command, ...(required.equivalent_commands || [])].filter(Boolean);
     if (required.command === null || required.command === undefined) {
       const pass = Boolean(required.evidence_tool && successfulTools.has(required.evidence_tool));

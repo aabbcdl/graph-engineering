@@ -158,7 +158,7 @@ export function buildLoopSummary({ run = {}, maxCorrections = null } = {}) {
   const nodeIds = run.node_order || Object.keys(records);
   const corrections = nodeIds.filter((id) => /^correction-r\d+$/.test(id));
   const verification = nodeIds.filter((id) => /^verification-r\d+$/.test(id));
-  const independent = nodeIds.filter((id) => /^independent-review-r\d+$/.test(id));
+  const independent = nodeIds.filter((id) => id === "independent-review" || /^independent-review-r\d+$/.test(id));
   const rounds = new Map();
   for (const item of run.loop_history || []) {
     const round = Number.isInteger(item.round) ? item.round : 0;
@@ -248,6 +248,7 @@ export function buildTimelineSummary({ run = {}, processAttempts = [] } = {}) {
 
 export function buildNextActions({ run = {}, coverage = {}, loop = {} } = {}) {
   const actions = [];
+  const reviewOnly = run.plan?.mode === "review";
   const evaluation = run.machine_check_evaluation || {};
   const requiredById = new Map((run.plan?.required_checks || []).map((check) => [String(check.id), check]));
   const machineGaps = new Map();
@@ -292,7 +293,10 @@ export function buildNextActions({ run = {}, coverage = {}, loop = {} } = {}) {
     }
   }
   for (const gap of coverage.verification_gaps || []) {
-    actions.push(gap.next_action || gap.resolution || `Provide machine evidence for ${gap.description || gap.id}.`);
+    const nextAction = gap.next_action || gap.resolution || `Provide machine evidence for ${gap.description || gap.id}.`;
+    actions.push(reviewOnly
+      ? `Review-only deferred coverage ${gap.id || "unknown"}: ${gap.description || gap.reason || "runtime evidence was intentionally not executed"}; this is not a review failure. ${nextAction}`
+      : nextAction);
   }
   for (const domain of coverage.domains || []) {
     if (["pending", "blocked", "omitted", "not_selected"].includes(domain.status) && domain.required) {
@@ -301,6 +305,8 @@ export function buildNextActions({ run = {}, coverage = {}, loop = {} } = {}) {
   }
   if (run.blocker?.unblock_condition) actions.push(run.blocker.unblock_condition);
   if (loop.no_progress_detected) actions.push("Change the correction hypothesis or start a new run with fresh evidence; the same failure was observed twice.");
-  if (!actions.length && run.status === "completed") actions.push("No mandatory follow-up remains; review the retained report and result package before applying isolated changes.");
+  if (!actions.length && run.status === "completed") actions.push(reviewOnly
+    ? "Read-only review completed; no source changes were made. Run a task or audit mode later when implementation or runtime verification is authorized."
+    : "No mandatory follow-up remains; review the retained report and result package before applying isolated changes.");
   return [...new Set(actions)].slice(0, 20);
 }

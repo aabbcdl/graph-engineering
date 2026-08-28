@@ -31,6 +31,10 @@ Every evaluation records a `harness` fingerprint block in `pairs.json` and `scor
   the canonical parsed truth content before launching either arm and records the
   observed hash in every score input;
 - `graph_run_version_expected`: the Run schema version the harness requires (currently 3);
+- `budget_contract` and `toolchain_contract`: canonical launch constraints that
+  every adapter identity must echo when declared. A manifest may carry a
+  `toolchain.platforms` map; the harness resolves exactly one current-host
+  platform/hash contract before either arm starts;
 - `environment`: Node version, platform, and architecture.
 
 The runner persists this block in `harness.json`, passes it to both arms through `--harness-file`, and each adapter recomputes and self-reports what it actually executed through `harness_identity`. The scorer requires every fingerprint field to match the launch record, requires the two arms to agree, and requires the Graph arm's actual Run schema version and persisted token/time budgets to match the declaration.
@@ -76,7 +80,7 @@ Each arm command receives these appended arguments:
 --repetition <integer>
 ```
 
-The adapter must run its workflow inside `--workspace`, enforce or monitor the supplied budget, and write the declared `timeout_minutes` and a recomputed `harness_identity`. The Graph adapter passes `--max-run-tokens` and `--max-run-minutes` to `graph-runner.mjs`, then the scorer verifies the persisted Run budget. The single-agent adapter has a hard process timeout and reports observed backend usage; it does not yet have a backend-proven aggregate token stop, so an observed baseline overrun is rejected rather than being presented as symmetric proactive enforcement.
+The adapter must run its workflow inside `--workspace`, enforce or monitor the supplied budget, and write the declared `timeout_minutes` and a recomputed `harness_identity`. A manifest may declare a `budget_contract`; the JobQueue pilot requires hard aggregate token and wall-time enforcement from both arms. The Graph adapter passes `--max-run-tokens` and `--max-run-minutes` to `graph-runner.mjs`, then the scorer verifies the persisted Run budget. The single-agent adapter uses the same runner's streaming aggregate token guard plus its process deadline and reports `budget_enforcement` explicitly. When a manifest declares a budget or toolchain contract, every adapter identity must echo the exact canonical contract and the scorer compares it to the launch fingerprint. Missing or asymmetric enforcement or identity binding is infrastructure-invalid and cannot become comparable.
 
 ```json
 {
@@ -112,7 +116,7 @@ npm run eval:run -- --manifest evals/manifest.json --output-dir evals/results/ru
 npm run eval:score -- --input evals/results/run-001/score-input.json --output evals/results/run-001/report.json
 ```
 
-Repository tests exercise the harness with `evals/tests/fake-arm.mjs`; they never run a real model.
+Repository tests exercise the harness with `evals/tests/fake-arm.mjs`; they never run a real model. The paired evaluation harness is source-checkout tooling and is intentionally excluded from the npm package; controlled evaluator modules, truth files, and hidden tests never become an installable runtime surface. The JobQueue pilot pins Go 1.27.0 binary SHA-256 values for both `win32-x64` and `linux-x64`; CI provisions that exact Go version, and the harness selects only the current platform contract before build/test evidence is accepted.
 
 ## Metrics
 

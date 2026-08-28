@@ -35,6 +35,10 @@ const DEFAULT_PREFLIGHT_ENV_KEYS = new Set([
   "PROGRAMFILES(X86)",
   "PROGRAMW6432",
   "USERNAME",
+  "JAVA_HOME",
+  "ANDROID_HOME",
+  "ANDROID_SDK_ROOT",
+  "ANDROID_AVD_HOME",
   "LANG",
   "LC_ALL",
   "TERM",
@@ -124,10 +128,19 @@ function quoteCmdArgument(value) {
 }
 
 function portableInvocation(command, args) {
-  if (process.platform !== "win32" || !/\.(?:cmd|bat)$/i.test(command)) return { command, args };
+  if (process.platform !== "win32" || !/\.(?:cmd|bat)$/i.test(command)) {
+    return { command, args, windowsVerbatimArguments: false };
+  }
   const comspec = process.env.ComSpec || path.join(process.env.SystemRoot || process.env.WINDIR || "C:\\Windows", "System32", "cmd.exe");
   const commandLine = [command, ...args].map(quoteCmdArgument).join(" ");
-  return { command: comspec, args: ["/d", "/s", "/c", commandLine] };
+  // A .cmd/.bat launched through cmd.exe is a batch-file handoff. `call`
+  // preserves the command path as one token even when the Node installation
+  // lives under a directory containing spaces.
+  return {
+    command: comspec,
+    args: ["/d", "/s", "/c", `call ${commandLine}`],
+    windowsVerbatimArguments: true,
+  };
 }
 
 function terminateProcessTree(child) {
@@ -159,6 +172,10 @@ async function runCommand(command, args, { workspace, timeoutMs = DEFAULT_TIMEOU
     env,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
+    // portableInvocation already performs the cmd.exe quoting. Let the
+    // Windows command line reach cmd.exe verbatim instead of having Node
+    // escape the embedded quotes a second time.
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     detached: process.platform !== "win32",
   });
   child.stdout.on("data", (chunk) => {
@@ -413,7 +430,7 @@ function pinnedRequirements(text) {
   return lines.length > 0 && lines.every((line) => /^[A-Za-z0-9_.-]+(?:\[[^\]]+\])?\s*===?\s*[^\s]+(?:\s+--hash=[^\s]+)*$/.test(line));
 }
 
-function adapterPlan({ ecosystem, directory, manifests, locks, manager, args, status = "ready", reason = null }) {
+function adapterPlan({ ecosystem, directory, manifests, locks, manager, args, status = "ready", reason = null, ...metadata }) {
   return {
     ecosystem,
     project_root: directory,
@@ -427,7 +444,24 @@ function adapterPlan({ ecosystem, directory, manifests, locks, manager, args, st
     lifecycle_scripts: "disabled-by-default",
     status,
     reason,
+    ...metadata,
   };
+}
+
+function withReadiness(record) {
+  if (!record || typeof record !== "object") return record;
+  const gaps = [
+    ...(Array.isArray(record.environment_gaps) ? record.environment_gaps : []),
+    ...(Array.isArray(record.preparation_gaps) ? record.preparation_gaps : []),
+  ].filter((gap) => gap && !["deferred", "disabled", "not_applicable"].includes(String(gap.status || "").toLowerCase()));
+  const readiness = record.status === "fail"
+    ? "failed"
+    : record.status === "not_applicable"
+      ? "not_applicable"
+      : gaps.length
+        ? "environment_gap"
+        : "ready";
+  return { ...record, readiness, ready: readiness === "ready" || readiness === "not_applicable" };
 }
 
 async function planPythonProject(directory) {
@@ -472,9 +506,63 @@ async function planPythonProject(directory) {
   });
 }
 
+function parseGoModuleDependencies(text) {
+  const source = String(text || "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "");
+  const requirements = [];
+  const localReplacements = new Set();
+  let block = null;
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (block) {
+      if (line === ")") {
+        block = null;
+        continue;
+      }
+      const tokens = line.split(/\s+/);
+      if (block === "require" && tokens[0]) requirements.push(tokens[0]);
+      if (block === "replace") {
+        const arrow = tokens.indexOf("=>");
+        if (arrow >= 1 && tokens[arrow + 1] && /^(?:\.|[A-Za-z]:[\\/]|[\\/])/.test(tokens[arrow + 1])) {
+          localReplacements.add(tokens[0]);
+        }
+      }
+      continue;
+    }
+    const blockMatch = line.match(/^(require|replace)\s*\($/);
+    if (blockMatch) {
+      block = blockMatch[1];
+      continue;
+    }
+    const requireMatch = line.match(/^require\s+(\S+)/);
+    if (requireMatch) {
+      requirements.push(requireMatch[1]);
+      continue;
+    }
+    const replaceMatch = line.match(/^replace\s+(\S+)(?:\s+\S+)?\s*=>\s*(\S+)/);
+    if (replaceMatch && /^(?:\.|[A-Za-z]:[\\/]|[\\/])/.test(replaceMatch[2])) {
+      localReplacements.add(replaceMatch[1]);
+    }
+  }
+  const uniqueRequirements = [...new Set(requirements)];
+  const externalRequirements = uniqueRequirements.filter((modulePath) => !localReplacements.has(modulePath));
+  return {
+    requirements: uniqueRequirements,
+    local_replacements: [...localReplacements].sort(),
+    external_requirements: externalRequirements,
+    external: externalRequirements.length > 0,
+  };
+}
+
 async function planGoProject(directory) {
   if (!(await exists(path.join(directory, "go.mod")))) return null;
+  const moduleFile = await readFile(path.join(directory, "go.mod"), "utf8");
+  const dependencies = parseGoModuleDependencies(moduleFile);
   const hasSum = await exists(path.join(directory, "go.sum"));
+  const stdlibOnly = !dependencies.external;
+  const ready = hasSum || stdlibOnly;
   return adapterPlan({
     ecosystem: "go",
     directory,
@@ -482,8 +570,16 @@ async function planGoProject(directory) {
     locks: hasSum ? ["go.sum"] : [],
     manager: "go",
     args: ["mod", "download"],
-    status: hasSum ? "ready" : "missing-lock",
-    reason: hasSum ? null : "Go project detected without go.sum; Graph will not guess a dependency restore mode.",
+    status: ready ? "ready" : "missing-lock",
+    reason: ready
+      ? (hasSum ? null : "Go module has no external requirements; go.sum is not required.")
+      : "Go module declares external requirements without go.sum; Graph will not guess a dependency restore mode.",
+    action: !hasSum && stdlibOnly ? "none" : ready ? "install" : "environment_gap",
+    dependency_mode: stdlibOnly ? "stdlib-only" : "external",
+    requirements: dependencies.requirements,
+    external_requirements: dependencies.external_requirements,
+    local_replacements: dependencies.local_replacements,
+    lock_basis: hasSum ? "go.sum" : "module-only",
   });
 }
 
@@ -569,7 +665,7 @@ async function fingerprintAdapterPlan(plan) {
     hashes.push(`${relative}:${await fileFingerprint(target)}`);
   }
   return createHash("sha256")
-    .update(`${plan.ecosystem}:${plan.status}:${DEPENDENCY_INSTALL_POLICY}:${hashes.sort().join("|")}`)
+    .update(`${plan.ecosystem}:${plan.status}:${plan.dependency_mode || "unknown"}:${DEPENDENCY_INSTALL_POLICY}:${hashes.sort().join("|")}`)
     .digest("hex");
 }
 
@@ -581,7 +677,7 @@ async function prepareAdapterPlan(plan) {
     action: plan.action,
     args: plan.args,
     lockfiles: plan.lockfiles,
-    status: plan.status === "ready" ? "deferred" : "environment_gap",
+    status: plan.status !== "ready" ? "environment_gap" : plan.action === "none" ? "not_applicable" : "deferred",
     host_execution_authorized: false,
     reason: plan.status === "ready"
       ? "Dependency preparation for this ecosystem is deferred to an isolated node sandbox; Graph does not execute project code on the host."
@@ -624,9 +720,12 @@ function multiEcosystemRecord({ workspace, plans, preparations = [], commands = 
     reason: plan.reason,
   }));
   const dependencyFingerprint = createHash("sha256").update(plans.map((plan) => plan.fingerprint).sort().join("|")).digest("hex");
+  const readiness = gaps.length ? "environment_gap" : "ready";
   return {
     version: 3,
     status: "pass",
+    readiness,
+    ready: readiness === "ready",
     workspace: path.resolve(workspace),
     checked_at: new Date().toISOString(),
     dependency_fingerprint: dependencyFingerprint,
@@ -721,9 +820,12 @@ function browserPreparationMatches(preparations, browser, { allowHostExecution =
 
 function preparationRecord({ plan, workspace, commands, preparations, cacheReused = false }) {
   const browserGaps = (preparations || []).filter((item) => ["fail", "unavailable"].includes(item.status));
+  const readiness = browserGaps.length ? "environment_gap" : "ready";
   return {
     version: 2,
     status: "pass",
+    readiness,
+    ready: readiness === "ready",
     workspace,
     checked_at: new Date().toISOString(),
     dependency_fingerprint: plan.dependency_fingerprint || null,
@@ -755,7 +857,7 @@ async function prepareNodeExecutionWorkspace({
   const resolved = path.resolve(workspace);
   const plan = await nodePreparationPlan(resolved, env, { requiredEnvironmentKinds });
   if (!plan) {
-    return { version: 1, status: "not_applicable", workspace: resolved, checked_at: new Date().toISOString(), plans: [] };
+    return { version: 1, status: "not_applicable", readiness: "not_applicable", ready: true, workspace: resolved, checked_at: new Date().toISOString(), plans: [] };
   }
   const browserPreparation = async ({ allowHostExecution = allowHostBrowserPreparation } = {}) => {
     const preparation = await prepareBrowser(plan.browser, resolved, timeoutMs, env, {
@@ -781,7 +883,7 @@ async function prepareNodeExecutionWorkspace({
       { allowHostExecution: allowHostBrowserPreparation },
     );
     if (dependenciesReusable && browserMatches) {
-      return { ...previous, reused_at: new Date().toISOString(), cache_reused: true };
+      return withReadiness({ ...previous, reused_at: new Date().toISOString(), cache_reused: true });
     }
     if (dependenciesReusable) {
       const browser = await browserPreparation();
@@ -816,7 +918,7 @@ async function prepareNodeExecutionWorkspace({
   if (!allowHostDependencyPreparation) {
     if (isolated) await rm(path.join(resolved, "node_modules"), { recursive: true, force: true });
     const browser = await browserPreparation({ allowHostExecution: false });
-    return {
+    return withReadiness({
       ...preparationRecord({
       plan,
       workspace: resolved,
@@ -841,7 +943,7 @@ async function prepareNodeExecutionWorkspace({
       ],
       }),
       dependency_directory_present: false,
-    };
+    });
   }
   const invocation = await commandForPlan(plan, resolved, env);
   if (isolated) await rm(path.join(resolved, "node_modules"), { recursive: true, force: true });
@@ -862,18 +964,19 @@ async function prepareNodeExecutionWorkspace({
     plans: [plan],
     commands: [result],
   };
+  const failedRecord = withReadiness(record);
   if (record.status !== "pass") {
     const error = new Error(
       `Workspace dependency preparation failed before model execution: ${path.basename(invocation.command)} ${invocation.args.join(" ")} ` +
       `(exit=${result.exit_code}, timeout=${result.timed_out})`,
     );
     error.code = "WORKSPACE_PREPARATION_FAILED";
-    error.preflight = record;
+    error.preflight = failedRecord;
     throw error;
   }
   const browser = await browserPreparation();
   const dependencyDetails = await stat(path.join(resolved, "node_modules")).catch(() => null);
-  return {
+  return withReadiness({
     ...record,
     preparations: browser.preparation.status === "not_applicable" ? [] : [browser.preparation],
     preparation_gaps: browser.preparation.status === "fail" || browser.preparation.status === "unavailable"
@@ -881,7 +984,7 @@ async function prepareNodeExecutionWorkspace({
       : [],
     commands: [...record.commands, ...browser.commands],
     dependency_directory_present: Boolean(dependencyDetails?.isDirectory()),
-  };
+  });
 }
 
 export async function prepareExecutionWorkspace({
@@ -893,7 +996,7 @@ export async function prepareExecutionWorkspace({
   const ecosystemPlans = await detectEcosystemPlans(resolved, repositoryRoot);
   const genericPlans = ecosystemPlans.filter((plan) => plan.ecosystem !== "node");
   const base = await prepareNodeExecutionWorkspace({ workspace: resolved, ...options });
-  if (!genericPlans.length) return base;
+  if (!genericPlans.length) return withReadiness(base);
   const genericPreparations = await Promise.all(genericPlans.map(async (plan) => {
     const adapter = ECOSYSTEM_ADAPTERS.find((candidate) => candidate.ecosystem === plan.ecosystem);
     return adapter.prepare(plan);
@@ -902,9 +1005,18 @@ export async function prepareExecutionWorkspace({
   if (base.status !== "not_applicable" || nodePlans.length) {
     const plans = [...nodePlans, ...genericPlans];
     const dependencyFingerprint = createHash("sha256").update(plans.map((plan) => plan.dependency_fingerprint || plan.fingerprint || "").sort().join("|")).digest("hex");
-    return {
+    const environmentGaps = genericPlans.filter((plan) => plan.status !== "ready").map((plan) => ({
+      ecosystem: plan.ecosystem,
+      project_root: plan.project_root,
+      status: plan.status,
+      reason: plan.reason,
+    }));
+    const readiness = base.status === "fail" ? "failed" : environmentGaps.length || (base.environment_gaps || []).length ? "environment_gap" : (base.readiness || "ready");
+    return withReadiness({
       ...base,
       version: 3,
+      readiness,
+      ready: readiness === "ready" || readiness === "not_applicable",
       plans,
       preparations: [...(base.preparations || []), ...genericPreparations],
       preparation_gaps: [...(base.preparation_gaps || []), ...genericPlans.filter((plan) => plan.status !== "ready").map((plan) => ({
@@ -914,15 +1026,10 @@ export async function prepareExecutionWorkspace({
         status: plan.status,
         reason: plan.reason,
       }))],
-      environment_gaps: genericPlans.filter((plan) => plan.status !== "ready").map((plan) => ({
-        ecosystem: plan.ecosystem,
-        project_root: plan.project_root,
-        status: plan.status,
-        reason: plan.reason,
-      })),
+      environment_gaps: [...(base.environment_gaps || []), ...environmentGaps],
       dependency_fingerprint: dependencyFingerprint,
       fingerprint: createHash("sha256").update(`${dependencyFingerprint}:${JSON.stringify(plans)}`).digest("hex"),
-    };
+    });
   }
   return multiEcosystemRecord({
     workspace: resolved,
@@ -950,5 +1057,11 @@ export const __test = {
   planRustProject,
   planJavaProject,
   planDotnetProject,
+  parseGoModuleDependencies,
   ECOSYSTEM_ADAPTERS,
 };
+
+// The Graph runner uses the same bounded capture and process-tree timeout
+// implementation for the opt-in Gradle machine probe. Keeping this command
+// path here avoids introducing a second ad-hoc subprocess implementation.
+export { runCommand as runPreflightCommand };

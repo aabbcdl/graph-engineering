@@ -38,7 +38,19 @@ function workspacePath(workspace, relative) {
 
 function pathIdentity(value) {
   const resolved = path.resolve(value);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  let existing = resolved;
+  while (!existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    existing = parent;
+  }
+  try {
+    const canonicalExisting = realpathSync(existing);
+    const canonical = path.join(canonicalExisting, resolved.slice(existing.length).replace(/^[/\\]+/, ""));
+    return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+  } catch {
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  }
 }
 
 function samePath(left, right) {
@@ -52,13 +64,14 @@ function pathIsInside(parent, candidate) {
 
 async function assertNoLinkedParents(workspace, relative) {
   const parts = relative.split("/").filter(Boolean);
+  const workspaceBoundary = await realpath(workspace).catch(() => path.resolve(workspace));
   let current = workspace;
   for (const part of parts.slice(0, -1)) {
     current = path.join(current, part);
     const details = await lstat(current);
     if (details.isSymbolicLink()) throw new Error(`Recovery path has a linked parent: ${relative}`);
     const resolved = await realpath(current);
-    if (!samePath(resolved, workspace) && !pathIsInside(workspace, resolved)) {
+    if (!samePath(resolved, workspaceBoundary) && !pathIsInside(workspaceBoundary, resolved)) {
       throw new Error(`Recovery path resolves outside workspace: ${relative}`);
     }
   }

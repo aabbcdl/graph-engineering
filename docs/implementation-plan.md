@@ -69,13 +69,13 @@
 - 用相同冻结 fixture 做 Graph 与单 agent baseline 的配对实验。
 - 至少收集五组完整可比样本，再报告发现率、真实缺陷率、修复率、误报率、耗时和 token 成本。
 - 补齐 API、贡献指南、升级/回滚说明和安全边界。
-- `D:\project\graph-engineering` 保持唯一源仓库，全局 Skill 仅作为发布安装物。
+- `<source-checkout>/graph-engineering` 保持唯一源仓库，全局 Skill 仅作为发布安装物。
 
-发布物只包含可执行的 runner、Skills、评测代码和冻结 fixture；`evals/results/`、`.workbuddy/` 以及其他本地运行产物不进入 npm 包。这样既保留了开源复现实验所需的材料，也避免把本机路径、模型调用证据和可能包含项目上下文的历史结果当成公共接口发布。
+源代码仓库保留可复现实验所需的评测代码和冻结 fixture；可安装 npm artifact 只包含可执行的 runner、Skills、运行时引用和必要文档，`evals/`、隐藏 truth/tests、`evals/results/`、`.workbuddy/` 以及其他本地运行产物不进入 npm 包。这样既保留了源码级实验能力，也避免把本机路径、模型调用证据和可能包含项目上下文的历史结果当成公共接口发布。
 
 验收：评测脚本、恢复测试和文档审查全部通过后，才做性能结论；单次真实项目运行不能被描述为统计证明。
 
-## 当前已完成
+## 当前已完成（本地控制面）
 
 - runtime 状态、事件、artifact、证据验证模块已加入。
 - runner 已写入节点生命周期事件、planner 生命周期事件、结果 artifact 和工作项交付章节。
@@ -83,8 +83,46 @@
 - watcher 已显示工作项计数、队列、健康状态和阻塞建议。
 - `graph-engineering events` 已提供无模型、只读的事件流读取入口。
 - `preview`、`diff`、`apply`（含 `--dry-run` 与选择性 `--file`）、`recheck`、`runs`、`gc` 六个控制面操作已实现并有 CLI 契约测试覆盖（只读性、无状态残留、变更分类、冲突检查、部分应用记录、recheck 守卫与 `already-satisfied` 快路径）。
-- 15 项改进计划五个阶段全部交付；`npm test`（255）、`npm run test:eval`（10）、`npm run validate`（72 项检查）全部通过。
+- 15 项控制面改进及后续产品契约修复已落地；本轮发布准备已通过 `npm run test:eval`（45/45）、`npm run validate`（72 项检查）、`npm run validate:package`（66 个文件 / 17 个发布 `.mjs`）和 `npm run test:package-smoke`。
+- npm 包边界已通过 tarball 检查：66 个文件、18 个 references、8 个 agents，且不包含 `evals/`、隐藏测试或仓库专用 smoke 工具；`npm pack --dry-run` 同样确认包含新的 runtime module map 和 marketing kit。安装后的显式 Skill installer、`help`、audit `preview`、fail-closed `doctor` 和 package `validate` 已由 public-bin smoke 覆盖；即使用户 `CODEX_HOME` 为空，运行器也会发现包内七个可供规划的 specialist。
+- `graph-engineering@0.3.0` 已通过 NPM 官方 registry 发布并验证为 `latest`；发布使用浏览器 web-auth/2FA，包的 GitHub repository 元数据指向公开仓库 `https://github.com/aabbcdl/graph-engineering`。
+- 本次发布没有代替用户执行 Git commit/push；本地发布准备改动与公开 GitHub `main` 的源代码同步仍是独立尾巴。
+- 本机完整 Graph runner 集成测试在当前环境的 fixture-only 重跑为 272 项：262 pass、6 skipped、4 项仍返回失败（涉及既有 release-only/broad-audit/StorePulse 与 test-fixture capability 断言）；这些失败发生在未修改的 `graph-runner.mjs` 集成面，未被本次 NPM 包级发布门禁掩盖；后续发布更高版本前仍应单独处理或明确豁免。
 - 本计划、设计说明、架构说明和使用说明已同步描述同一状态语义。
+
+## 大型仓库优化计划（复审版）实施状态
+
+- **T-01 预算 admission：已实现。** 模型进程启动前写入 Run 级
+  `reserved_tokens`；可用预算按“已观察 usage + 活跃 reservation”计算。
+  `budget_exceeded` 统一为预算终止，不进入普通 worker retry；单个已启动
+  调用允许有界终端超额，但不会再启动未预留调用。
+- **T-02 fail-fast 与生命周期收敛：已实现。** review wave 的首个预算终止、
+  用户 stop 或宿主中断会取消未完成兄弟节点；已完成节点保留，未完成节点
+  标记为 `interrupted`，并在报告前回收 reservation、关闭 attempt、同步
+  runtime state。旧 Run 继续使用 `reconcileInterruptedRuns`，恢复时清理
+  没有对应活动进程的旧 reservation。
+- **T-03 模块地图与上下文分片：已实现第一轮。** 每个 Run 生成确定性的
+  `workspace-module-map.json`，planner/review 只接收有界的 focus-ranked
+  orientation context；exact snapshot 默认行为保持不变，不自动排除生成目录，
+  也没有新增 submodule 聚合接口。
+- **T-04 Android/Gradle 预检：已实现 opt-in 两层边界。** 静态检查通过
+  `--machine-preflight` 开启；`--machine-preflight-gradle` 才会在隔离 execution
+  workspace 中执行 `projects` 和受限 task `--dry-run`，并记录命令、退出码、耗时
+  与文件 surface 变化。工具链缺失属于 `waiting_environment`，未请求或未执行
+  的 probe 不被记为命令失败。
+- **T-05 Windows smoke：保留为外部门禁，当前未宣称 ready。** Mac 端只准备
+  runner 和证据契约；没有真实 Windows protected smoke 时状态继续是
+  `UNKNOWN`/`waiting_environment`。五组 paired evaluation 也尚未满足，因此不
+  声称 Graph 比单 Agent 更省 token 或更有效。
+
+submodule separate 聚合和自动快照瘦身仍是后续设计/实验任务，未进入本轮公共
+接口或默认行为。
+
+## 当前未闭合的验收门
+
+- 真实 Agent 能力：当前 Windows `doctor --agent-backend codex --json` 仍为 exit 2，read-only 与 workspace-write smoke 记录缺失；因此不能声称 `task-ready`。必须在受保护 runner 上运行真实 Codex/Claude smoke，并保留当前 runner、binary 和 sandbox 绑定的机器证据。
+- Graph 实际效果：`npm run test:eval` 只证明 harness contract。当前没有满足 Run v3 绑定的五组 comparable real-model pairs，既有记录保持 `claim_ready=false`；因此不能声称 Graph 比 baseline 更有效或更省 token。
+- 发布状态：当前 checkout 为 dirty、未生成经 CI 验证的 release commit/artifact，远程 CI 和发布回滚信号未在本轮观察；因此本项目状态是“本地控制面可用”，不是“可发布”。
 
 ## 明确不在本次自动化范围内
 
@@ -95,7 +133,7 @@
 
 ## 完成定义
 
-本次改造只有在以下条件同时满足时才可称为“实现完成”：
+本次改造的本地实现只有在以下条件同时满足时才可称为“控制面实现完成”；若要宣称 task-ready、效果已证实或可发布，还必须满足下方外部门禁：
 
 - 主 runner 和 runtime 模块语法检查通过；
 - `npm test`、`npm run test:eval`、`npm run validate` 全部通过；
@@ -103,3 +141,9 @@
 - 最终 diff 不包含未经说明的生成文件或源工作区写入；
 - 未通过的真实项目运行仍按其实际终态报告，不被测试通过替代。
 - `npm pack --dry-run` 不包含 `evals/results/` 或 `.workbuddy/`，且包含新的 runtime 模块。
+
+外部门禁：
+
+- 真实 Agent smoke 通过并使 `doctor` 返回 `ready`；
+- 至少五组完整、绑定同一 fixture/goal/model/effort/budget 的 comparable pairs，且 scorer 返回 `claim_ready=true`；
+- 对明确 release commit 观察到远程 CI、artifact identity、回滚路径和故障信号。

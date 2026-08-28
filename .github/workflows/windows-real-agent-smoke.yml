@@ -20,6 +20,8 @@ jobs:
         include:
           - name: Codex writer
             command: npm run test:windows-codex-write-smoke
+          - name: Codex reader
+            command: npm run test:windows-codex-readonly-smoke
           - name: Claude reader
             command: npm run test:windows-claude-sandbox-smoke
           - name: Claude writer

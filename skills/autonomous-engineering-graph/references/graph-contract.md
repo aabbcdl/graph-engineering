@@ -50,7 +50,7 @@ planner
 
 Verification or independent-review failure creates a bounded correction node and returns to verification. The runner never retries a failed gate without an intervening correction or a newly recorded hypothesis.
 
-The planner may add read-only specialist reviews. It may not remove stage supervision, synthesis, implementation/no-op confirmation, verification, independent review, or final evidence reporting. Version 1 runs retain their saved no-supervision graph when resumed; new version 2 runs use all three supervision gates by default. Writers are serialized by default.
+The planner may add read-only specialist reviews. It may not remove stage supervision, synthesis, implementation/no-op confirmation, verification, independent review, or final evidence reporting. Version 1 runs retain their saved no-supervision graph when resumed; legacy Version 2 runs retain their saved graph, while new Version 3 runs use all three supervision gates by default. Writers are serialized by default.
 
 ## Node Contract
 
@@ -112,7 +112,7 @@ results/metadata.json
 results/apply.mjs (only when all mandatory gates pass)
 ```
 
-Version 2 runtime records also include:
+Version 3 runtime records also include:
 
 ```text
 runtime-state.json
@@ -148,7 +148,7 @@ On Windows, isolated Codex invocation preserves the configured `[windows].sandbo
 
 ## Workspace Isolation
 
-New version 2 runs default to `auto`. A path that is itself a Git root/worktree root is reproduced in a dedicated detached worktree, including dirty tracked changes and untracked files captured at launch. A path nested inside a larger Git repository is scoped to that directory and copied without inheriting the parent worktree, as are non-Git workspaces. The source workspace remains the run identity; every node operates only in the frozen execution workspace.
+New Version 3 runs default to `auto`. A path that is itself a Git root/worktree root is reproduced in a dedicated detached worktree, including dirty tracked changes and untracked files captured at launch. A path nested inside a larger Git repository is scoped to that directory and copied without inheriting the parent worktree, as are non-Git workspaces. The source workspace remains the run identity; every node operates only in the frozen execution workspace.
 
 Windows execution workspaces use a short managed root by default and Git worktree operations enable long-path handling explicitly. The managed root and run-derived key are persisted in `workspace-isolation.json`; an external execution path without that binding is never eligible for automatic deletion. Worktree checkout, copied-snapshot creation, and dirty-state overlay are transactional: a startup failure removes the partial directory and any Git registration before the command returns. `AEG_EXECUTION_ROOT` may override the managed root without changing the state or source workspace identity.
 
@@ -156,9 +156,22 @@ Source file changes after launch do not alter an isolated execution workspace. L
 
 Legacy version 1 runs resume in `live` mode. Explicit `live` mode remains available but exposes the run to ordinary workspace drift rules.
 
+`--mode review` is a separate read-only lifecycle. The controller compiles
+discovery, specialist reviews, synthesis, synthesis supervision, and one fresh
+independent review, then reports the result. It omits implementation,
+implementation supervision, verification, and correction entirely. Dependency
+and runtime/device/release checks are not run in this mode; they are labeled
+deferred or not assessed, and no isolated result is eligible for application.
+
+For `copy` isolation, the missing `.git` directory in the execution snapshot
+is intentional. A source Git launch snapshot records the source workspace,
+HEAD, refs/config fingerprints, and short status. The runner may satisfy a
+normalized Git-state requirement from that source evidence, but node execution
+never runs Git inspection against the user's source workspace to fill the gap.
+
 ## Stage Supervision
 
-Version 2 inserts a read-only control node after planning, synthesis, and implementation. A supervisor checks goal alignment, scope, duplicated review, evidence quality, uncovered important surfaces, owner decisions, and readiness for the next stage. It is not another unbounded domain review. Required project checks remain future obligations of the verification node; synthesis supervision must not require synthesis to execute, repeat, or record placeholder results for them.
+Version 3 inserts a read-only control node after planning, synthesis, and implementation. A supervisor checks goal alignment, scope, duplicated review, evidence quality, uncovered important surfaces, owner decisions, and readiness for the next stage. It is not another unbounded domain review. Required project checks remain future obligations of the verification node; synthesis supervision must not require synthesis to execute, repeat, or record placeholder results for them.
 
 Each supervision stage receives a compact summary of only the artifact it owns, the minimum adjacent artifact needed to check coverage, the authoritative controller-managed graph shape, and the compact node runtime contract. It does not receive the full general Skill or unrelated queue, recovery, installation, and result-application contracts. It must not call tools, inspect the repository, repeat discovery, receive the whole run history, or reject a planner for omitting mandatory lifecycle stages that the deterministic runner owns. A synthesis correction receives the prior synthesis artifact and supervisor feedback instead of all specialist artifacts again. The supervisor agent runs from its evidence directory rather than the project root while its model admission remains associated with the source workspace. It may pass, identify a genuine blocker, or request one bounded correction of only its owning stage. The corrected stage is supervised once more. A second rejection stops with exact evidence instead of entering an open loop. Supervision phase and accepted artifact IDs are persisted so resume never repeats a passed control gate.
 

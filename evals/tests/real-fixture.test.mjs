@@ -11,6 +11,9 @@ import {
   evaluate as evaluateJobqueue,
   gradeFindings as gradeJobqueueFindings,
   parseTestResults,
+  runPublicChecks as runJobqueuePublicChecks,
+  runEvaluationChecks,
+  toolchainContractForPlatform,
 } from "../fixtures/jobqueue.evaluator.mjs";
 import { canonicalJsonSha256, hashTree } from "../lib/pair-runner.mjs";
 
@@ -28,6 +31,75 @@ test("jobqueue evaluator parses Go JSON test records separated by real newlines"
   const results = parseTestResults(output);
   assert.equal(results.get("TestHiddenQueueFIFO"), "pass");
   assert.equal(results.get("TestHiddenQueuePriority"), "fail");
+});
+
+test("jobqueue evaluator binds the official binary for each CI platform", () => {
+  assert.deepEqual(toolchainContractForPlatform("win32", "x64"), {
+    ecosystem: "go",
+    version: "go1.27.0",
+    platform: "win32-x64",
+    binary_sha256: "7d828191ba32519a9c9361789ab647486236ed45c660889196c7770a8ff1985c",
+  });
+  assert.deepEqual(toolchainContractForPlatform("linux", "x64"), {
+    ecosystem: "go",
+    version: "go1.27.0",
+    platform: "linux-x64",
+    binary_sha256: "1db869c560a193573a71be466a34e0d4abb7792d78165c6102cdda069276a3a8",
+  });
+  assert.deepEqual(toolchainContractForPlatform("darwin", "arm64"), {
+    ecosystem: "go",
+    version: "go1.27.0",
+    platform: "darwin-arm64",
+    binary_sha256: "71c4991041d8e44975c882e4f72005719c958013d3340dc665a3808b72ddf702",
+  });
+});
+
+test("jobqueue evaluator completes public checks before hidden observation", async () => {
+  const phases = [];
+  let active = 0;
+  let maximumActive = 0;
+  const enter = (name) => {
+    phases.push(`${name}:start`);
+    active += 1;
+    maximumActive = Math.max(maximumActive, active);
+    return () => {
+      active -= 1;
+      phases.push(`${name}:end`);
+    };
+  };
+  const result = await runEvaluationChecks("fixture", "go", {
+    runPublicChecks() {
+      const leave = enter("public");
+      leave();
+      return {
+        build: { status: "pass", detail: "" },
+        tests: { status: "pass", detail: "" },
+      };
+    },
+    observeDefects: async () => {
+      const leave = enter("hidden");
+      await Promise.resolve();
+      leave();
+      return [];
+    },
+  });
+  assert.equal(maximumActive, 1);
+  assert.deepEqual(phases, ["public:start", "public:end", "hidden:start", "hidden:end"]);
+  assert.deepEqual(result.defects, []);
+});
+
+test("jobqueue public build is independent of parent Git VCS stamping", () => {
+  const commands = [];
+  const result = runJobqueuePublicChecks("go", "fixture", (command, args, workspace) => {
+    commands.push({ command, args, workspace });
+    return { status: "pass", detail: "" };
+  });
+  assert.deepEqual(commands[0], {
+    command: "go",
+    args: ["build", "-buildvcs=false", "./..."],
+    workspace: "fixture",
+  });
+  assert.equal(result.build.status, "pass");
 });
 
 test("booking-ledger fixture hides six behavioral defects behind passing public tests", async () => {
@@ -81,9 +153,11 @@ test("jobqueue hides 23 frozen defects behind passing Go public checks without w
   const after = await hashTree(JOBQUEUE_FIXTURE);
   assert.equal(after, before);
   assert.deepEqual(result.regression_checks.map((check) => [check.id, check.status]), [
+    ["go-toolchain", "pass"],
     ["go-build", "pass"],
     ["go-test", "pass"],
   ]);
+  assert.deepEqual(result.toolchain_contract, toolchainContractForPlatform());
   assert.equal(result.defects.length, 23);
   assert.ok(result.defects.every((defect) => defect.repaired === false));
   assert.ok(result.defects.every((defect) => defect.observed === true));
@@ -136,4 +210,39 @@ test("jobqueue pilot binds the frozen truth file before any arm run", async () =
   const truth = JSON.parse(await readFile(JOBQUEUE_TRUTH, "utf8"));
   assert.equal(fixture.truth_sha256, canonicalJsonSha256(truth));
   assert.equal(fixture.repetitions, 5);
+  assert.deepEqual(manifest.budget_contract, {
+    token_scope: "aggregate",
+    wall_time_scope: "aggregate",
+    enforcement: "hard",
+  });
+  assert.equal(manifest.toolchain.version, "go1.27.0");
+  assert.deepEqual(manifest.toolchain.platforms, {
+    "win32-x64": {
+      binary_sha256: "7d828191ba32519a9c9361789ab647486236ed45c660889196c7770a8ff1985c",
+    },
+    "linux-x64": {
+      binary_sha256: "1db869c560a193573a71be466a34e0d4abb7792d78165c6102cdda069276a3a8",
+    },
+    "darwin-arm64": {
+      binary_sha256: "71c4991041d8e44975c882e4f72005719c958013d3340dc665a3808b72ddf702",
+    },
+  });
+});
+
+test("the npm package does not ship hidden evaluation truth or hidden tests", async () => {
+  const packageJson = JSON.parse(await readFile(path.resolve(TEST_DIR, "..", "..", "package.json"), "utf8"));
+  assert.equal(packageJson.files.includes("evals/fixtures"), false);
+  assert.equal(packageJson.files.some((entry) => /hidden|truth|manifest\.pilot-jobqueue/.test(entry)), false);
+  assert.equal(packageJson.files.some((entry) => entry === "evals/lib" || entry.startsWith("evals/")), false);
+  const npmIgnore = await readFile(path.resolve(TEST_DIR, "..", "..", ".npmignore"), "utf8");
+  assert.match(npmIgnore, /skills\/\*\*\/scripts\/tests\//);
+});
+
+test("CI provisions the pinned Go toolchain before evaluation tests", async () => {
+  const workflow = await readFile(path.resolve(TEST_DIR, "..", "..", ".github", "workflows", "ci.yml"), "utf8");
+  const setupIndex = workflow.indexOf("uses: actions/setup-go@v5");
+  const evaluationIndex = workflow.indexOf("run: npm run test:eval");
+  assert.ok(setupIndex >= 0, "CI must install the pinned Go toolchain");
+  assert.ok(evaluationIndex > setupIndex, "Go setup must run before evaluation tests");
+  assert.match(workflow, /go-version:\s*["']?1\.27\.0["']?/);
 });

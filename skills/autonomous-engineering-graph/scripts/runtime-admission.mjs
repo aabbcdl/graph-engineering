@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -20,7 +21,19 @@ function runnerRegistryRoot(controlRoot = runtimeControlRoot()) {
 
 function workspaceIdentity(workspace) {
   const resolved = path.resolve(workspace);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  let existing = resolved;
+  while (!existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    existing = parent;
+  }
+  try {
+    const canonicalExisting = realpathSync(existing);
+    const canonical = path.join(canonicalExisting, resolved.slice(existing.length).replace(/^[/\\]+/, ""));
+    return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+  } catch {
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  }
 }
 
 function workspaceApplyLockPath(controlRoot, workspace) {

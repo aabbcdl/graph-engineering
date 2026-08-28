@@ -2,6 +2,7 @@
 
 import { COPYFILE_EXCL } from "node:constants";
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,6 +51,7 @@ function pathIsInside(parent, candidate) {
 
 async function assertNoLinkedParents(workspace, relative) {
   const parts = relative.split("/").filter(Boolean);
+  const workspaceBoundary = await realpath(workspace).catch(() => path.resolve(workspace));
   let current = workspace;
   for (const part of parts.slice(0, -1)) {
     current = path.join(current, part);
@@ -57,7 +59,7 @@ async function assertNoLinkedParents(workspace, relative) {
     const details = await lstat(current);
     if (details.isSymbolicLink()) throw new Error(`Result path has a linked parent: ${relative}`);
     const resolved = await realpath(current);
-    if (!pathIsInside(workspace, resolved)) throw new Error(`Result path resolves outside workspace: ${relative}`);
+    if (!pathIsInside(workspaceBoundary, resolved)) throw new Error(`Result path resolves outside workspace: ${relative}`);
   }
 }
 
@@ -83,7 +85,8 @@ async function assertRegularPayload(filesRoot, relative, record) {
     throw new Error(`Result payload is not a regular file: ${relative}`);
   }
   const resolved = await realpath(payload);
-  if (!pathIsInside(filesRoot, resolved)) throw new Error(`Result payload resolves outside its package: ${relative}`);
+  const filesBoundary = await realpath(filesRoot).catch(() => path.resolve(filesRoot));
+  if (!pathIsInside(filesBoundary, resolved)) throw new Error(`Result payload resolves outside its package: ${relative}`);
   if (!(await matches(payload, record))) throw new Error(`Result payload does not match its recorded hash: ${relative}`);
 }
 
@@ -414,8 +417,8 @@ async function applyResultsUnderAdmission({ resultDir, workspace, metadata, befo
 
 function isMainModule() {
   if (!process.argv[1]) return false;
-  const modulePath = path.resolve(fileURLToPath(import.meta.url));
-  const invokedPath = path.resolve(process.argv[1]);
+  const modulePath = realpathSync(fileURLToPath(import.meta.url));
+  const invokedPath = realpathSync(process.argv[1]);
   return process.platform === "win32" ? modulePath.toLowerCase() === invokedPath.toLowerCase() : modulePath === invokedPath;
 }
 

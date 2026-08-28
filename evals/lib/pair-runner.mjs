@@ -34,6 +34,65 @@ function sha256Hex(value) {
   return typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
 }
 
+function validateToolchainDeclaration(toolchain) {
+  if (
+    !toolchain ||
+    typeof toolchain.ecosystem !== "string" ||
+    !toolchain.ecosystem.trim() ||
+    typeof toolchain.version !== "string" ||
+    !toolchain.version.trim()
+  ) {
+    throw new Error("toolchain must include ecosystem and platform plus a version and pinned binary_sha256");
+  }
+  if (toolchain.platforms !== undefined) {
+    if (
+      !toolchain.platforms ||
+      typeof toolchain.platforms !== "object" ||
+      Array.isArray(toolchain.platforms) ||
+      !Object.keys(toolchain.platforms).length
+    ) {
+      throw new Error("toolchain.platforms must contain at least one platform contract");
+    }
+    for (const [platform, contract] of Object.entries(toolchain.platforms)) {
+      if (!/^[a-z0-9][a-z0-9._-]*$/i.test(platform) || !contract || !sha256Hex(contract.binary_sha256)) {
+        throw new Error(`toolchain platform ${platform} must include a pinned binary_sha256`);
+      }
+    }
+    if (toolchain.platform !== undefined || toolchain.binary_sha256 !== undefined) {
+      throw new Error("toolchain must use either platforms or one platform/binary_sha256 pair, not both");
+    }
+    return;
+  }
+  if (typeof toolchain.platform !== "string" || !toolchain.platform.trim() || !sha256Hex(toolchain.binary_sha256)) {
+    throw new Error("toolchain must include ecosystem and platform plus a version and pinned binary_sha256");
+  }
+}
+
+function resolveToolchainContract(toolchain, { platform = process.platform, arch = process.arch } = {}) {
+  if (toolchain === null || toolchain === undefined) return null;
+  validateToolchainDeclaration(toolchain);
+  const platformKey = `${platform}-${arch}`;
+  if (toolchain.platforms) {
+    const selected = toolchain.platforms[platformKey];
+    if (!selected) throw new Error(`toolchain does not support ${platformKey}`);
+    return {
+      ecosystem: toolchain.ecosystem.trim(),
+      version: toolchain.version.trim(),
+      platform: platformKey,
+      binary_sha256: selected.binary_sha256.toLowerCase(),
+    };
+  }
+  if (toolchain.platform !== platformKey) {
+    throw new Error(`toolchain does not support ${platformKey}; declared ${toolchain.platform}`);
+  }
+  return {
+    ecosystem: toolchain.ecosystem.trim(),
+    version: toolchain.version.trim(),
+    platform: toolchain.platform.trim(),
+    binary_sha256: toolchain.binary_sha256.toLowerCase(),
+  };
+}
+
 async function exists(target) {
   try {
     await access(target);
@@ -86,6 +145,15 @@ function validateManifest(manifest) {
     throw new Error("timeout_minutes must be a positive integer");
   }
   if (!Array.isArray(manifest.fixtures) || !manifest.fixtures.length) throw new Error("fixtures must not be empty");
+  if (manifest.budget_contract !== undefined) {
+    const contract = manifest.budget_contract;
+    if (!contract || contract.token_scope !== "aggregate" || contract.wall_time_scope !== "aggregate" || contract.enforcement !== "hard") {
+      throw new Error("budget_contract must require hard aggregate token and wall-time enforcement");
+    }
+  }
+  if (manifest.toolchain !== undefined) {
+    validateToolchainDeclaration(manifest.toolchain);
+  }
   for (const arm of ["graph", "baseline"]) {
     if (!Array.isArray(manifest.arms?.[arm]?.command) || !manifest.arms[arm].command.length) {
       throw new Error(`arms.${arm}.command must be a non-empty argv array`);
@@ -164,6 +232,23 @@ function adapterErrors(raw, expected) {
   if (!Array.isArray(raw.findings)) errors.push("findings must be an array");
   if (!Array.isArray(raw.regression_checks)) errors.push("regression_checks must be an array");
   if (typeof raw.completed_gates !== "boolean") errors.push("completed_gates must be boolean");
+  if (expected.budgetContract) {
+    const enforcement = raw.budget_enforcement;
+    if (
+      !enforcement ||
+      enforcement.token_scope !== expected.budgetContract.token_scope ||
+      enforcement.wall_time_scope !== expected.budgetContract.wall_time_scope ||
+      enforcement.enforcement !== expected.budgetContract.enforcement
+    ) {
+      errors.push("budget enforcement does not satisfy the declared hard aggregate contract");
+    }
+    if (canonicalJson(raw.harness_identity?.budget_contract ?? null) !== canonicalJson(expected.budgetContract)) {
+      errors.push("adapter harness identity budget_contract does not match the launch contract");
+    }
+  }
+  if (expected.toolchainContract && canonicalJson(raw.harness_identity?.toolchain_contract ?? null) !== canonicalJson(expected.toolchainContract)) {
+    errors.push("adapter harness identity toolchain_contract does not match the launch contract");
+  }
   return errors;
 }
 
@@ -178,6 +263,7 @@ async function runArm({
   fixtureSha,
   manifest,
   harnessPath,
+  toolchainContract,
 }) {
   const workspace = path.join(pairDirectory, `${arm}-workspace`);
   await cp(frozenSnapshot, workspace, { recursive: true, force: false, errorOnExist: true, verbatimSymlinks: true });
@@ -226,6 +312,8 @@ async function runArm({
     reasoningEffort: manifest.reasoning_effort,
     tokenBudget: manifest.token_budget,
     timeoutMinutes: manifest.timeout_minutes,
+    budgetContract: manifest.budget_contract || null,
+    toolchainContract,
   }) : [readError];
   if (processResult.code !== 0) errors.push(`adapter exited with code ${processResult.code ?? "null"}`);
   if (processResult.timed_out) errors.push("adapter timed out");
@@ -261,7 +349,7 @@ async function sha256File(target) {
   return createHash("sha256").update(await readFile(target)).digest("hex");
 }
 
-async function harnessIdentity({ manifestSha256 = null } = {}) {
+async function harnessIdentity({ manifestSha256 = null, budgetContract = null, toolchain = null } = {}) {
   const runnerPath = path.join(PROJECT_ROOT, "skills", "autonomous-engineering-graph", "scripts", "graph-runner.mjs");
   const revision = spawnSync("git", ["rev-parse", "HEAD"], { cwd: PROJECT_ROOT, encoding: "utf8" });
   return {
@@ -271,6 +359,8 @@ async function harnessIdentity({ manifestSha256 = null } = {}) {
     evals_lib_sha256: await hashTree(path.join(PROJECT_ROOT, "evals", "lib")),
     adapters_sha256: await hashTree(path.join(PROJECT_ROOT, "evals", "adapters")),
     manifest_sha256: manifestSha256,
+    budget_contract: budgetContract,
+    toolchain_contract: toolchain,
     graph_run_version_expected: RUN_VERSION,
     environment: { node: process.version, platform: process.platform, arch: process.arch },
   };
@@ -283,7 +373,12 @@ async function runPairedEvaluation({ manifestPath, outputDirectory }) {
   const manifest = JSON.parse(manifestContent);
   validateManifest(manifest);
   const manifestSha256 = sha256(manifestContent);
-  const harness = await harnessIdentity({ manifestSha256 });
+  const toolchainContract = resolveToolchainContract(manifest.toolchain || null);
+  const harness = await harnessIdentity({
+    manifestSha256,
+    budgetContract: manifest.budget_contract || null,
+    toolchain: toolchainContract,
+  });
   const resolvedOutput = path.resolve(outputDirectory);
   if (await exists(resolvedOutput)) throw new Error(`Output directory already exists: ${resolvedOutput}`);
   await mkdir(resolvedOutput, { recursive: true });
@@ -327,6 +422,7 @@ async function runPairedEvaluation({ manifestPath, outputDirectory }) {
           fixtureSha: frozen.sha256,
           manifest,
           harnessPath,
+          toolchainContract,
         });
       }
       if ((await hashTree(frozen.target)) !== frozen.sha256) throw new Error(`Adapter modified frozen fixture: ${fixture.id}`);
@@ -349,4 +445,13 @@ async function runPairedEvaluation({ manifestPath, outputDirectory }) {
   };
 }
 
-export { adapterErrors, argumentValue, canonicalJsonSha256, harnessIdentity, hashTree, runPairedEvaluation, validateManifest };
+export {
+  adapterErrors,
+  argumentValue,
+  canonicalJsonSha256,
+  harnessIdentity,
+  hashTree,
+  resolveToolchainContract,
+  runPairedEvaluation,
+  validateManifest,
+};

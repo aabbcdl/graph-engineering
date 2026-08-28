@@ -25,6 +25,46 @@
 
 ## 2026-08-22
 
+### First-principles product-fit hardening pass started
+
+- Re-read the existing plan and current repository state; `main` at `51571c0`, clean, no commit/push authorized.
+- Confirmed scope: local code/tests/docs only; no Graph run, real model pilot, release, or remote write.
+- Next: add targeted RED tests for the five remaining operational-contract gaps before production edits.
+
+### 2026-08-23 closure implementation
+
+- Added RED coverage for Claude capability path consistency, concurrent probe merging, fake-agent-bound test bypass, Chinese audit inference, evaluation contract identity, and npm package boundary.
+- Implemented the corresponding runner/harness/package fixes. Focused GREEN checks pass; the intermediate package check reported 69 files and excludes `evals/`.
+- Manual read-only checks confirm Chinese audit preview selects `mode=audit`, four required domains, and high assurance without state residue; the local Codex doctor correctly remains blocked until protected sandbox smoke records exist.
+- At this checkpoint full post-change verification was still running; the terminal results and unchanged authorization boundary are recorded in the final closure audit below.
+
+## 2026-08-23 final closure audit
+
+- Found and fixed a gate-critical installability defect during final verification. The npm tarball had omitted all `agents/` and `references/` descendants because the `files` globs named directories without recursive `/**`; installed `graph-runner.mjs` failed before argument parsing with `ENOENT` for `specialist-pack.json`.
+- Added `skills/autonomous-engineering-graph/scripts/tests/package-contract.test.mjs` and confirmed the intended RED failure before changing package metadata. `package.json` now includes recursive production directories, and `scripts/validate-package.mjs` derives required paths from `specialist-pack.json`.
+- Final commands and terminal results before the strict probe closure: `npm test` exit 0 (270/270, 830049.9084ms); `npm run test:eval` exit 0 (40/40); `npm run validate` exit 0 (72 checks); `npm run validate:package` exit 0 (69 files, 21 shipped `.mjs`, 0 denied paths); `npm run test:package-smoke` exit 0; `npm pack --dry-run` reports 69 files, 18 references, 8 agents, 0 `evals/`, 0 `scripts/tests/`; `git diff --check` exit 0; source `help` and Chinese audit `preview` pass.
+- Strict sandbox-probe closure then completed: `npm test` exit 0 (272/272); the two new tests require target-specific `sandbox_write_denied` evidence and recognize caught PowerShell/.NET write denials; affected smoke scripts pass syntax checks.
+- `doctor --agent-backend codex --json` intentionally exits 2 with installed/invocable Codex but unverified read-only and workspace-write sandbox probes. No real-agent smoke, current Run v3 paired model pilot, Graph Run, commit, push, deploy, or publish was run. Existing reports remain descriptive (`claim_ready=false`).
+
+### TDD RED evidence
+
+- Added regressions for standard-library Go modules, external Go requirements, preflight readiness semantics, strict capability doctor, audit preview mode/assurance, package hidden-boundary, and the pilot budget/toolchain contract.
+- RED confirmed: `graph-runner.test.mjs` fails at module instantiation because the planned `agentCapabilityDoctor` export is absent; `adapter-common.test.mjs` fails because `manifest.budget_contract` is absent. The real-fixture package-contract test is still running its existing evaluator cases and will be recorded after completion.
+
+### Product-fit hardening implementation
+
+- Go preflight now parses `go.mod` requirements and treats a no-external-requirement module without `go.sum` as `stdlib-only`/ready with no restore action; external requirements without `go.sum` remain `missing-lock`.
+- All preflight records expose `status` plus `readiness` and `ready`; reports persist the distinction and list environment gaps.
+- Added strict `doctor`, first-start/submit/resume capability gating, generic v2 backend capability records, exact runner/binary identity, and Codex read/write smoke workflow coverage. `AEG_TEST_MODE=1` is forwarded only to controlled test children; the doctor CLI explicitly disables that override.
+- npm package allowlist now excludes `evals/fixtures`, hidden tests, evaluator modules, truth, and pilot manifests; package validator rejects those paths.
+- JobQueue evaluator pins Go 1.27.0 and the Windows amd64 binary SHA-256, and the pilot declares a hard aggregate budget contract. Both graph and baseline adapters report the contract; baseline uses the runner's streaming token guard.
+- Preview infers audit goals, applies the four-domain floor, and routes `assurance=auto` to high for audit plans. Docs cover the new operational contracts.
+
+### Verification observations
+
+- Targeted GREEN: 7 new Graph regressions, 3 package/manifest regressions, 24 pair/scorer tests, JobQueue real fixture (23/23 observed), `validate:package`, and `validate` all pass.
+- First full `npm test` after implementation: 261/266 passed, 5 failures. All five were diagnosed and fixed: Go action classification and test-marker propagation to detached fake runners. The corrected focused reproductions pass; a fresh full-suite run remains the final gate.
+
 ### Tail closure for the v0.3 control-plane session
 
 - **Status:** completed; the 15-item plan is fully delivered.
@@ -81,3 +121,64 @@
 ## Checkpoint policy
 
 The v0.3 control-plane work was committed and pushed to `origin/main` (`92e3b59`) after explicit owner approval on 2026-08-22. Later tail work follows the same rule: commit only with current owner approval.
+
+## 2026-08-23 continuation completion audit
+
+- Reopened completion for a requirement-by-requirement audit of installability, readiness, evaluation comparability, and runtime trust boundaries.
+- Independent diff review found that generic ecosystem preflight records `ready=false` but the runner does not enforce it before planner execution. A RED integration regression is next.
+- `npm audit --omit=dev --json` exited with `ENOLOCK`; the repository has no package lock and declares no runtime or development dependencies.
+- **TDD RED:** `an ecosystem readiness gap stops before planner model usage` failed because the Python missing-lock fixture returned exit 0 instead of 2 after consuming fake-agent planner/workflow calls. The failure was the intended missing readiness gate.
+- **TDD GREEN:** the runner now stops before planner use, preserves `status=pass` plus `readiness=environment_gap`, and records a source-fix/new-Run blocker; the five adjacent Go/preflight tests pass.
+- **Package-boundary RED:** `installed npm bin exercises the core control-plane commands` failed because the installed smoke report had no public-entrypoint or `preview`/`doctor` execution evidence; the old smoke invoked only the internal runner path for `help`.
+
+### Continuation completion audit closeout
+
+- **Historical observation, superseded:** installed tarball smoke ran through npm's public bin shim and `validate` reported 41 discovered Skills. The 2026-08-26 clean-home reproduction proved that count came from ambient user Skills rather than the tarball; the closure below replaces it with a deterministic seven-specialist bundled contract.
+- Added a platform-aware Go toolchain contract: the JobQueue pilot binds official Go 1.27.0 hashes for `win32-x64` and `linux-x64`, resolves the current host before either arm starts, and CI provisions Go 1.27.0 on both runners.
+- `npm run test:eval`: exit 0; 43/43 passed, including hidden JobQueue observation and contract tests.
+- Full final gates: `npm test` 274/274; `npm run validate` 72/72; `npm run validate:package` 69 files / 21 shipped `.mjs` / 0 denied; `npm run test:package-smoke` pass; Go build/vet/test pass; syntax and `git diff --check` pass.
+- Final evidence boundary unchanged: no Graph Run, real Codex/Claude sandbox smoke, real model paired pilot, commit, push, deploy, or publish was performed.
+
+## 2026-08-23 continuation implementation
+
+- Revalidated the current dirty checkout before editing. The prior `274/274` closure entry is historical and is no longer treated as current evidence.
+- Baseline full-suite result from the current host was exit 1 with `271/274` passed; the three failures were child-process timeout assertions in dependency preparation and installer tests. Isolated reruns passed, including the slow installer path.
+- Added `SLOW_INTEGRATION_TIMEOUT=120000` for the deliberately slow dependency/installer child processes and a `spawnResultDetails()` helper so `spawnSync` timeout errors retain `result.error` diagnostics.
+- Split `.github/workflows/ci.yml` into `runtime-regression` and `contract-and-package` jobs with independent time budgets; no release or remote workflow was triggered.
+- Updated `findings.md` to distinguish historical closure evidence from this continuation's observed results. Real Codex/Claude probes, a Graph Run, and current v3 paired evaluation remain external verification gates.
+
+## 2026-08-23 second verification
+
+- Fresh full `npm test` exited 0 with 274/274 passed in 820701.2586 ms; the prior three timeout failures did not recur under the bounded slow-path budget.
+- Fresh downstream gates passed: `npm run test:eval` 43/43; `npm run validate` 72 checks; `npm run validate:package` 69 files / 21 shipped `.mjs` / 0 denied paths; `npm run test:package-smoke` through npm's public bin; JobQueue Go 1.27.0 build/vet/test; 203 `.mjs` syntax checks; `git diff --check`.
+- `npm pack --dry-run` confirmed the shipped boundary (69 files, 18 references, 8 agents, no `evals/` or hidden tests). `npm audit --omit=dev --json` still returns `ENOLOCK` because this zero-dependency repository has no lockfile; this remains an audit limitation, not a clean dependency assertion.
+- Fresh `doctor --agent-backend codex --json` exits 2 with installed/invocable checks passing and both sandbox dimensions unverified. Source `preview` confirms audit mode, four required domains, high assurance waiting, and no state creation.
+- First-principles acceptance matrix is now recorded in `findings.md`: the local install/control/recovery surface is sufficient for controlled use, while real-agent task readiness, real-model paired effectiveness, remote CI, and release readiness remain open gates.
+
+## 2026-08-23 capability identity hardening continuation
+
+- Added a RED regression for same-size/same-mtime executable replacement; the old capability identity contract failed at module import because the content-binding helpers were absent.
+- Added `content_sha256` to `invocationIdentity`, bumped the sandbox capability record version to `3`, and made capability matching compare the complete invocation identity. Focused capability tests pass 7/7.
+- Updated README, usage, architecture, findings, and implementation-plan text so “resolved agent binary” means content-bound evidence. Real smoke remains intentionally unrun; this change only makes future smoke records harder to replay across binary replacement.
+
+## 2026-08-23 post-hardening verification
+
+- Full `npm test` exited 0 with 275/275 passed in 783284.3856 ms.
+- `npm run test:eval` exited 0 with 43/43; `npm run validate` passed 72 checks; `npm run validate:package` passed with 69 files / 21 shipped `.mjs` / 0 denied; `npm run test:package-smoke` passed with the expected blocked doctor/validate readiness diagnostics.
+- JobQueue Go 1.27.0 build/vet/test exited 0; 203 `.mjs` files passed syntax checks; `git diff --check` exited 0.
+- The remaining external gates are unchanged: protected real-agent smoke, current v3 paired model evidence, remote CI/release identity, and any authorized release action.
+
+## 2026-08-23 invocation-prefix identity continuation
+
+- RED: a same-size/same-mtime prefixed CLI script replacement left `invocationIdentity` unchanged.
+- GREEN: capability identity now includes existing path-like prefix files and their content hashes; command and prefix replacement regressions pass.
+- Documentation and findings now describe the complete invocation binding. Its required full-suite verification is fulfilled by the 2026-08-26 closure below.
+
+## 2026-08-26 repository health closure
+
+- Reproduced the current dirty checkout before editing: `npm test` failed 272/276, `npm run test:eval` failed 43/44, and installed package smoke found zero Skills with an isolated user home.
+- Fixed the shared package/routing cause by discovering the npm artifact's sibling graph specialists as a canonical `bundled` origin. The control-plane Skill remains excluded, so installed `validate` now deterministically reports seven specialists without reading ambient user Skills.
+- Fixed Windows dependency preparation when `npm.cmd` is installed below a path containing spaces: the batch handoff uses `call` and passes the already-quoted command line verbatim to `cmd.exe`. The lifecycle-script denial regression passes.
+- Disabled Go VCS stamping only for the frozen JobQueue evaluator build. This preserves compile coverage while preventing unrelated parent Git ownership/configuration from invalidating the fixture.
+- Fresh closure evidence on the final code: `npm test` 278/278 in 256433.2238 ms; `npm run test:eval` 45/45; `npm run validate` 72 checks; `npm run validate:package` 69 files / 21 shipped `.mjs` / 0 denied paths; installed npm-bin package smoke pass with seven bundled specialists; JobQueue Go 1.27.0 build/vet/test pass; 48 source `.mjs` syntax checks and `git diff --check` pass.
+- No real-agent smoke, real-model paired pilot, remote CI, commit, push, deploy, or publish was performed. Those external evidence and authorization gates remain open.

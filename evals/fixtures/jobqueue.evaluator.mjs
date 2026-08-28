@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { access, cp, mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import os from "node:os";
@@ -7,6 +9,17 @@ import { fileURLToPath } from "node:url";
 
 const FIXTURE_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const HIDDEN_TEST_DIRECTORY = path.join(FIXTURE_DIRECTORY, "jobqueue-hidden-tests");
+const GO_TOOLCHAIN_CONTRACT = Object.freeze({
+  ecosystem: "go",
+  version: "go1.27.0",
+  binary_sha256_by_platform: Object.freeze({
+    "win32-x64": "7d828191ba32519a9c9361789ab647486236ed45c660889196c7770a8ff1985c",
+    "linux-x64": "1db869c560a193573a71be466a34e0d4abb7792d78165c6102cdda069276a3a8",
+    "darwin-arm64": "71c4991041d8e44975c882e4f72005719c958013d3340dc665a3808b72ddf702",
+  }),
+});
+const GO_COMMAND_TIMEOUT_MS = 60_000;
+const GO_HIDDEN_COMMAND_TIMEOUT_MS = 60_000;
 
 const DEFINITIONS = [
   { id: "config-storage-path", category: "cross_module_contract", package: ".", tests: ["TestHiddenConfigStoragePath"], pattern: /storage.{0,40}(?:path|file)|config.{0,40}(?:store|persist)/i },
@@ -38,21 +51,77 @@ function goExecutable() {
   if (process.env.JOBQUEUE_GO_BINARY) return process.env.JOBQUEUE_GO_BINARY;
   const local = path.resolve(FIXTURE_DIRECTORY, "..", "..", ".tmp", "go-toolchain", "bin", process.platform === "win32" ? "go.exe" : "go");
   if (existsSync(local)) return local;
-  return process.platform === "win32" ? "go.exe" : "go";
+  const command = process.platform === "win32" ? "where.exe" : "which";
+  const resolved = spawnSync(command, [process.platform === "win32" ? "go.exe" : "go"], { encoding: "utf8", windowsHide: true });
+  const executable = resolved.status === 0 ? resolved.stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean) : null;
+  return executable || (process.platform === "win32" ? "go.exe" : "go");
 }
+
+function toolchainContractForPlatform(platform = process.platform, arch = process.arch) {
+  const platformKey = `${platform}-${arch}`;
+  const binarySha256 = GO_TOOLCHAIN_CONTRACT.binary_sha256_by_platform[platformKey];
+  if (!binarySha256) return null;
+  return {
+    ecosystem: GO_TOOLCHAIN_CONTRACT.ecosystem,
+    version: GO_TOOLCHAIN_CONTRACT.version,
+    platform: platformKey,
+    binary_sha256: binarySha256,
+  };
+}
+
+function verifyGoToolchain() {
+  const contract = toolchainContractForPlatform();
+  if (!contract) {
+    return { status: "fail", detail: `unsupported JobQueue toolchain platform ${process.platform}-${process.arch}` };
+  }
+  const executable = goExecutable();
+  const version = spawnSync(executable, ["version"], { encoding: "utf8", windowsHide: true });
+  const versionText = [version.stdout, version.stderr].filter(Boolean).join(" ").trim();
+  if (version.status !== 0 || !new RegExp(`\\b${GO_TOOLCHAIN_CONTRACT.version.replaceAll(".", "\\.")}\\b`).test(versionText)) {
+    return { status: "fail", detail: `expected ${GO_TOOLCHAIN_CONTRACT.version}; observed ${versionText || "toolchain unavailable"}` };
+  }
+  let binarySha256 = null;
+  try {
+    binarySha256 = createHash("sha256").update(readFileSync(executable)).digest("hex");
+  } catch (error) {
+    return { status: "fail", detail: `cannot hash Go toolchain: ${error.message || error}` };
+  }
+  if (binarySha256.toLowerCase() !== contract.binary_sha256) {
+    return { status: "fail", detail: `Go binary SHA-256 ${binarySha256} does not match pinned ${contract.binary_sha256}` };
+  }
+  return {
+    status: "pass",
+    detail: `${versionText}; sha256=${binarySha256}`,
+    executable,
+    version: versionText,
+    binary_sha256: binarySha256,
+    toolchain_contract: contract,
+  };
+}
+
 
 function commandResult(command, argumentsList, cwd) {
   const result = spawnSync(command, argumentsList, {
     cwd,
     encoding: "utf8",
     windowsHide: true,
-    timeout: 30_000,
+    timeout: GO_COMMAND_TIMEOUT_MS,
   });
   const output = [result.stdout, result.stderr, result.error && String(result.error.message || result.error)]
     .filter(Boolean)
     .join("\n")
     .trim();
   return { status: result.status === 0 ? "pass" : "fail", detail: output.slice(-4000) };
+}
+
+function runPublicChecks(command, cwd, runner = commandResult) {
+  return {
+    // Evaluation fixtures are source snapshots, not release binaries. Disable
+    // VCS stamping so an unrelated parent Git ownership/configuration cannot
+    // turn a valid compile into infrastructure noise.
+    build: runner(command, ["build", "-buildvcs=false", "./..."], cwd),
+    tests: runner(command, ["test", "./..."], cwd),
+  };
 }
 
 async function makeHiddenWorkspace(workspace) {
@@ -95,7 +164,7 @@ function runHiddenPackage(workspace, packagePath) {
     cwd: workspace,
     encoding: "utf8",
     windowsHide: true,
-    timeout: 30_000,
+    timeout: GO_HIDDEN_COMMAND_TIMEOUT_MS,
   });
   const output = [result.stdout, result.stderr, result.error && String(result.error.message || result.error)]
     .filter(Boolean)
@@ -105,6 +174,8 @@ function runHiddenPackage(workspace, packagePath) {
 }
 
 async function observedDefects(workspace) {
+  const toolchain = verifyGoToolchain();
+  if (toolchain.status !== "pass") throw new Error(`JobQueue evaluator toolchain contract failed: ${toolchain.detail}`);
   const hidden = await makeHiddenWorkspace(workspace);
   try {
     const packageRuns = new Map();
@@ -132,6 +203,14 @@ async function observedDefects(workspace) {
   } finally {
     await rm(hidden.root, { recursive: true, force: true });
   }
+}
+
+async function runEvaluationChecks(workspace, command, options = {}) {
+  const publicRunner = options.runPublicChecks || ((go, cwd) => runPublicChecks(go, cwd));
+  const defectRunner = options.observeDefects || observedDefects;
+  const publicChecks = publicRunner(command, workspace);
+  const defects = await defectRunner(workspace);
+  return { defects, ...publicChecks };
 }
 
 function findingText(finding) {
@@ -183,17 +262,22 @@ function gradeFindings(rawFindings, defects) {
 
 async function evaluate(workspace, rawFindings = []) {
   const go = goExecutable();
-  const [defects, build, tests] = await Promise.all([
-    observedDefects(workspace),
-    Promise.resolve(commandResult(go, ["build", "./..."], workspace)),
-    Promise.resolve(commandResult(go, ["test", "./..."], workspace)),
-  ]);
+  const toolchain = verifyGoToolchain();
+  const checks = toolchain.status === "pass"
+    ? await runEvaluationChecks(workspace, go)
+    : {
+        defects: DEFINITIONS.map((definition) => ({ id: definition.id, observed: false, repaired: false, detail: toolchain.detail })),
+        build: { status: "fail", detail: `skipped: ${toolchain.detail}` },
+        tests: { status: "fail", detail: `skipped: ${toolchain.detail}` },
+      };
   return {
-    defects,
-    findings: gradeFindings(rawFindings, defects),
+    defects: checks.defects,
+    toolchain_contract: toolchain.toolchain_contract || null,
+    findings: gradeFindings(rawFindings, checks.defects),
     regression_checks: [
-      { id: "go-build", ...build },
-      { id: "go-test", ...tests },
+      { id: "go-toolchain", ...toolchain },
+      { id: "go-build", ...checks.build },
+      { id: "go-test", ...checks.tests },
     ],
   };
 }
@@ -209,9 +293,15 @@ async function assertHiddenTemplatesPresent() {
 
 export {
   DEFINITIONS,
+  GO_TOOLCHAIN_CONTRACT,
   assertHiddenTemplatesPresent,
   evaluate,
   gradeFindings,
+  goExecutable,
   observedDefects,
   parseTestResults,
+  runPublicChecks,
+  runEvaluationChecks,
+  toolchainContractForPlatform,
+  verifyGoToolchain,
 };

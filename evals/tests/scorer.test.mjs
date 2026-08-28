@@ -201,6 +201,41 @@ test("a Graph Run must persist the declared token and wall-time budgets", () => 
   assert.ok(errors.some((error) => /graph Run max minute budget differs/.test(error)));
 });
 
+test("budget and toolchain contracts are bound to each arm identity", () => {
+  const contract = {
+    token_scope: "aggregate",
+    wall_time_scope: "aggregate",
+    enforcement: "hard",
+  };
+  const toolchain = {
+    ecosystem: "go",
+    version: "go1.27.0",
+    platform: "win32-x64",
+    binary_sha256: hash("a"),
+  };
+  const boundHarness = { ...harness, budget_contract: contract, toolchain_contract: toolchain };
+  const boundIdentity = adapterIdentity({ budget_contract: contract, toolchain_contract: toolchain });
+  const valid = comparabilityErrors(
+    pair(
+      1,
+      arm({ harness_identity: boundIdentity, budget_enforcement: contract }),
+      arm({ harness_identity: boundIdentity, budget_enforcement: contract }),
+    ),
+    boundHarness,
+  );
+  assert.deepEqual(valid.filter((error) => /contract|toolchain/i.test(error)), []);
+  const drifted = comparabilityErrors(
+    pair(
+      1,
+      arm({ harness_identity: adapterIdentity({ budget_contract: null, toolchain_contract: null }), budget_enforcement: contract }),
+      arm({ harness_identity: boundIdentity, budget_enforcement: contract }),
+    ),
+    boundHarness,
+  );
+  assert.ok(drifted.some((error) => /budget_contract differs from harness/.test(error)));
+  assert.ok(drifted.some((error) => /toolchain_contract differs from harness/.test(error)));
+});
+
 test("rejection classes separate negative results from infrastructure failures", () => {
   assert.equal(classifyRejection(["graph did not complete"]), "negative_result");
   assert.equal(classifyRejection(["graph exceeded token budget: 1300/1000"]), "negative_result");

@@ -4,14 +4,20 @@
   "description": "A durable, evidence-driven multi-agent engineering graph for repository audit and repair.",
   "type": "module",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aabbcdl/graph-engineering.git"
+  },
   "bin": {
-    "graph-engineering": "skills/autonomous-engineering-graph/scripts/graph-runner.mjs"
+    "graph-engineering": "skills/autonomous-engineering-graph/scripts/graph-runner.mjs",
+    "graph-engineering-install": "scripts/install.mjs"
   },
   "scripts": {
     "test": "node --test skills/autonomous-engineering-graph/scripts/tests/*.test.mjs",
     "test:eval": "node --test evals/tests/*.test.mjs",
     "test:windows-write-smoke": "node scripts/windows-codex-write-smoke.mjs",
     "test:windows-codex-write-smoke": "node scripts/windows-codex-write-smoke.mjs --backend codex",
+    "test:windows-codex-readonly-smoke": "node scripts/windows-codex-readonly-smoke.mjs",
     "test:windows-claude-write-smoke": "node scripts/windows-codex-write-smoke.mjs --backend claude",
     "test:windows-claude-sandbox-smoke": "node scripts/windows-claude-readonly-smoke.mjs",
     "test:package-smoke": "node scripts/package-smoke.mjs",
@@ -19,33 +25,22 @@
     "eval:score": "node evals/score.mjs",
     "validate": "node skills/autonomous-engineering-graph/scripts/validate-specialist-pack.mjs",
     "validate:package": "node scripts/validate-package.mjs",
-    "install:global": "node scripts/install.mjs"
+    "install:global": "node scripts/install.mjs",
+    "release:check": "node scripts/release-check.mjs",
+    "prepublishOnly": "npm run release:check"
   },
   "engines": {
     "node": ">=20"
   },
   "files": [
-    "skills",
+    "skills/**/SKILL.md",
+    "skills/**/agents/**",
+    "skills/**/references/**",
+    "skills/autonomous-engineering-graph/scripts/*.mjs",
+    "skills/autonomous-engineering-graph/scripts/runtime",
+    "skills/autonomous-engineering-graph/scripts/schemas",
     "docs",
-    "evals/adapters",
-    "evals/fixtures",
-    "evals/fixtures/jobqueue-hidden-tests",
-    "evals/lib",
-    "evals/tests",
-    "evals/manifest.example.json",
-    "evals/manifest.pilot.json",
-    "evals/manifest.pilot-2500k.json",
-    "evals/manifest.pilot-4000k.json",
-    "evals/manifest.pilot-jobqueue.json",
-    "evals/README.md",
-    "evals/run-paired.mjs",
-    "evals/score.mjs",
-    "evals/scripts",
     "scripts/install.mjs",
-    "scripts/package-smoke.mjs",
-    "scripts/validate-package.mjs",
-    "scripts/windows-codex-write-smoke.mjs",
-    "scripts/windows-claude-readonly-smoke.mjs",
     "README.md",
     "CONTRIBUTING.md",
     "SECURITY.md",

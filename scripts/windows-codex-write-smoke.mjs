@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  recordClaudeSandboxProbe,
+  recordAgentSandboxProbe,
   spawnCodex,
 } from "../skills/autonomous-engineering-graph/scripts/graph-runner.mjs";
 
@@ -127,9 +127,7 @@ try {
   }
 }
 
-if (backend === "claude") {
-  const capability = await recordClaudeSandboxProbe("workspace-write", workspace);
-  result.automatic_fallback_ready = capability.automatic_fallback_ready;
-  result.capability_file = capability.path;
-}
+const capability = await recordAgentSandboxProbe(backend, "workspace-write", workspace);
+result.automatic_fallback_ready = capability.automatic_fallback_ready;
+result.capability_file = capability.path;
 process.stdout.write(`${JSON.stringify(result)}\n`);

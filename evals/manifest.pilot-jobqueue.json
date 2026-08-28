@@ -5,6 +5,26 @@
   "token_budget": 2500000,
   "timeout_minutes": 240,
   "minimum_pairs_for_claim": 5,
+  "budget_contract": {
+    "token_scope": "aggregate",
+    "wall_time_scope": "aggregate",
+    "enforcement": "hard"
+  },
+  "toolchain": {
+    "ecosystem": "go",
+    "version": "go1.27.0",
+    "platforms": {
+      "win32-x64": {
+        "binary_sha256": "7d828191ba32519a9c9361789ab647486236ed45c660889196c7770a8ff1985c"
+      },
+      "linux-x64": {
+        "binary_sha256": "1db869c560a193573a71be466a34e0d4abb7792d78165c6102cdda069276a3a8"
+      },
+      "darwin-arm64": {
+        "binary_sha256": "71c4991041d8e44975c882e4f72005719c958013d3340dc665a3808b72ddf702"
+      }
+    }
+  },
   "fixtures": [
     {
       "id": "jobqueue",

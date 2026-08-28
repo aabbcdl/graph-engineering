@@ -29,20 +29,37 @@ if (result.status !== 0) {
 }
 const report = JSON.parse(result.stdout).at(-1);
 const files = (report?.files || []).map((entry) => String(entry.path || entry).replaceAll("\\", "/"));
-const denied = /^(?:evals\/results(?:\/|$)|\.workbuddy(?:\/|$)|\.tmp(?:\/|$)|node_modules(?:\/|$)|\.git(?:\/|$)|.*\.log$|.*\.tmp$)/i;
+const denied = /^(?:evals(?:\/|$)|skills\/[^/]+\/scripts\/tests(?:\/|$)|\.workbuddy(?:\/|$)|\.tmp(?:\/|$)|node_modules(?:\/|$)|\.git(?:\/|$)|.*\.log$|.*\.tmp$)/i;
+const deniedDevelopmentScripts = /^scripts\/(?:package-smoke|validate-package|windows-[^/]+)\.mjs$/i;
 const violations = files.filter((file) => denied.test(file));
+violations.push(...files.filter((file) => deniedDevelopmentScripts.test(file)));
 if (violations.length) {
   throw new Error(`Package contains denied paths: ${violations.join(", ")}`);
 }
 const required = [
   "package.json",
+  "README.md",
+  "LICENSE",
+  "SECURITY.md",
+  "scripts/install.mjs",
   "skills/autonomous-engineering-graph/scripts/graph-runner.mjs",
   "skills/autonomous-engineering-graph/scripts/runtime/event-log.mjs",
   "skills/autonomous-engineering-graph/scripts/runtime/manifest.mjs",
-  "evals/fixtures/jobqueue.evaluator.mjs",
-  "evals/fixtures/jobqueue-hidden-tests/hidden_root_test.go",
-  "evals/manifest.pilot-jobqueue.json",
+  "skills/autonomous-engineering-graph/references/specialist-pack.json",
 ];
+const specialistPack = JSON.parse(await readFile(
+  path.join(projectRoot, "skills", "autonomous-engineering-graph", "references", "specialist-pack.json"),
+  "utf8",
+));
+for (const reference of specialistPack.shared_references || []) {
+  required.push(`skills/autonomous-engineering-graph/${reference.target}`);
+}
+for (const skill of specialistPack.skills || []) {
+  required.push(`skills/${skill.name}/agents/openai.yaml`);
+  for (const reference of skill.references || []) {
+    required.push(`skills/${skill.name}/${reference.target}`);
+  }
+}
 for (const file of required) {
   if (!files.includes(file)) throw new Error(`Package is missing required path: ${file}`);
 }
@@ -60,6 +77,12 @@ if (failures.length) {
   throw new Error(`Shipped .mjs syntax checks failed: ${failures.map((failure) => failure.file).join(", ")}`);
 }
 const packageJson = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8"));
+if (packageJson.bin?.["graph-engineering"] !== "skills/autonomous-engineering-graph/scripts/graph-runner.mjs") {
+  throw new Error("package bin is missing the graph-engineering runner");
+}
+if (packageJson.bin?.["graph-engineering-install"] !== "scripts/install.mjs") {
+  throw new Error("package bin is missing the graph-engineering-install installer");
+}
 process.stdout.write(`${JSON.stringify({
   status: "pass",
   package: packageJson.name,

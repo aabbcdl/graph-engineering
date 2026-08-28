@@ -5,3 +5,4 @@ export * from "./evidence-verifier.mjs";
 export * from "./run-summary.mjs";
 export * from "./budget.mjs";
 export * from "./manifest.mjs";
+export * from "./workspace-map.mjs";

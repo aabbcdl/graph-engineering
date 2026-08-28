@@ -6,3 +6,11 @@ coverage/
 *.log
 *.tmp
 .git/
+
+# The paired evaluation harness and its fixtures are source-checkout tooling,
+# not an installable runtime surface. Keeping them out avoids shipping an
+# adapter that cannot load its controlled evaluator after installation.
+evals/
+
+# Repository-only regression fixtures are not part of the installed runtime.
+skills/**/scripts/tests/

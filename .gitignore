@@ -5,3 +5,5 @@ evals/results/
 .workbuddy/
 *.log
 *.tmp
+.DS_Store
+.debug-release/

@@ -48,7 +48,11 @@ async function readHarness(args) {
 async function reportedHarnessIdentity(args, additions = {}) {
   const expected = await readHarness(args);
   return {
-    ...await harnessIdentity({ manifestSha256: expected.manifest_sha256 }),
+    ...await harnessIdentity({
+      manifestSha256: expected.manifest_sha256,
+      budgetContract: expected.budget_contract || null,
+      toolchain: expected.toolchain_contract || expected.toolchain || null,
+    }),
     ...additions,
   };
 }
@@ -115,9 +119,16 @@ function isRepositoryFinding(finding) {
   );
 }
 
-async function finishEvaluation({ args, status, usage, queueMs, rawFindings, completedGates, artifacts = {}, identity = null }) {
+async function finishEvaluation({ args, status, usage, queueMs, rawFindings, completedGates, artifacts = {}, identity = null, budgetEnforcement = null }) {
+  const harness = await readHarness(args);
   const evaluator = await loadEvaluator(args.fixtureId);
   const graded = await evaluator.evaluate(args.workspace, rawFindings);
+  const reportedIdentity = identity && typeof identity === "object" ? { ...identity } : identity;
+  if (harness.toolchain_contract) {
+    // The evaluator is the authority for what binary actually ran. A mere
+    // manifest echo is not enough to make a toolchain-bound pair comparable.
+    reportedIdentity.toolchain_contract = graded.toolchain_contract || null;
+  }
   const result = {
     status,
     model: args.model,
@@ -125,7 +136,8 @@ async function finishEvaluation({ args, status, usage, queueMs, rawFindings, com
     token_budget: args.tokenBudget,
     timeout_minutes: args.timeoutMinutes,
     usage: normalizedUsage(usage),
-    harness_identity: identity,
+    ...(budgetEnforcement ? { budget_enforcement: budgetEnforcement } : {}),
+    harness_identity: reportedIdentity,
     findings: graded.findings,
     regression_checks: graded.regression_checks,
     completed_gates: completedGates && graded.regression_checks.every((check) => check.status === "pass"),

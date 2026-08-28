@@ -201,3 +201,37 @@ test("adapter contract rejects a changed declared wall-time budget", () => {
   });
   assert.ok(errors.some((error) => /reported timeout minutes 90 does not match 180/.test(error)));
 });
+
+test("adapter contract rejects an identity that omits declared harness contracts", () => {
+  const budgetContract = { token_scope: "aggregate", wall_time_scope: "aggregate", enforcement: "hard" };
+  const toolchainContract = {
+    ecosystem: "go",
+    version: "go1.27.0",
+    platform: "win32-x64",
+    binary_sha256: "a".repeat(64),
+  };
+  const errors = adapterErrors(
+    {
+      model: "fixture-model",
+      reasoning_effort: "high",
+      token_budget: 1000,
+      timeout_minutes: 180,
+      usage: { input_tokens: 10, output_tokens: 20 },
+      findings: [],
+      regression_checks: [],
+      completed_gates: true,
+      budget_enforcement: budgetContract,
+      harness_identity: { budget_contract: null, toolchain_contract: null },
+    },
+    {
+      model: "fixture-model",
+      reasoningEffort: "high",
+      tokenBudget: 1000,
+      timeoutMinutes: 180,
+      budgetContract,
+      toolchainContract,
+    },
+  );
+  assert.ok(errors.some((error) => /budget_contract/.test(error)));
+  assert.ok(errors.some((error) => /toolchain_contract/.test(error)));
+});

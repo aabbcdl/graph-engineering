@@ -4,9 +4,9 @@
 
 The installable Skill is an explicit opt-in entry point for repository engineering tasks. The deterministic runner owns orchestration, persistence, model admission, safety gates, evidence capture, reporting, notification, and result export. Each node starts a fresh agent CLI process; the parent chat is not the runtime controller and does not need to remain alive. Ordinary repository work remains direct unless the current task names Graph or accepts a concrete recommendation.
 
-The standalone repository is authoritative. Global Skill folders are deployment copies created by the transactional installer.
+The standalone repository is authoritative. Global Skill folders are deployment copies created by the transactional installer. The runner also discovers the seven sibling graph specialists shipped in its npm artifact, so public-bin execution does not depend on ambient user Skills. Those bundled graph names are canonical for that runner version and cannot be shadowed by project or global copies; global directories remain available for optional non-Graph Skills.
 
-## Version 2 Lifecycle
+## Version 3 Lifecycle
 
 ```text
 planner
@@ -27,6 +27,20 @@ Each supervisor is a short artifact-only control gate, not another broad review.
 
 Every non-planner node has a preflight input budget. The runner compacts upstream results and machine proof, embeds one concise controller contract, hides local Skill paths, and stops before contacting a model when a prompt still exceeds its role budget. The controller contract is machine-enforced and does not consume a model's `skills_applied` evidence obligation; only selected domain Skills and their required references must be self-reported.
 
+Model admission is also a run-level control-plane operation. Before spawning a
+model process, the runner reserves a bounded token amount under the run lock;
+available capacity is `max_tokens - observed_tokens - active_reservations`. A
+node without enough reservation waits instead of launching an unaccounted call.
+The reservation is held until the attempt's usage is persisted, allowing a
+terminal call to consume a bounded amount above its allocation without opening
+a race for the next node. A `budget_exceeded` stream event becomes a budget
+termination, never an ordinary retry. The first budget termination, user stop,
+or host interruption cancels unfinished siblings in the same wave, preserves
+completed work, closes attempts, releases model leases, and regenerates the
+report from synchronized `run.json` and `runtime-state.json`. Recovery reclaims
+reservations whose owner process is gone; resume schedules only incomplete
+work items.
+
 ## Frozen Execution Workspace
 
 `auto` selects a detached Git worktree only when the supplied path is the Git root/worktree root. A path nested inside a larger repository is scoped to that directory and uses a copy, so parent-repository files cannot leak into the audit. The runner recreates the exact launch state, including dirty tracked and untracked files, inside the selected snapshot. Non-Git workspaces use a copy that does not follow links. Nodes read and write only the execution workspace; project rules are discovered from the source snapshot.
@@ -36,6 +50,17 @@ On Windows, the managed execution workspace defaults to the short path `%LOCALAP
 The source workspace and execution workspace have separate identities in every run artifact. Source file development after launch does not alter an isolated execution workspace. Linked worktrees still share Git refs and repository config, so Graph hashes those fields around every node and conservatively blocks if they change while a node is active. At the end, Graph exports only changes attributable to implementation or correction writers. `results/apply.mjs` verifies launch hashes and refuses the whole operation when any target has changed. Before its first source mutation it stages every payload and verifies a backup of every existing target. A later apply error restores already touched targets and removes Graph-created directories; if a target changes again during rollback, Graph preserves the backups and reports the exact unresolved path instead of overwriting that concurrent change. The complete apply transaction holds a fixed workspace admission lock, so two result packages cannot interleave; a `live` run holds the same lock through its final report. Isolated `worktree` and `copy` modes refuse leaf symlinks and Windows junctions before snapshot creation; preserving a link would otherwise let a child process resolve back into the source or an unrelated external directory. A writer-created link is retained as evidence but makes the result package ineligible for application, and the apply script independently rejects forged or stale link records before touching the source. Repositories that intentionally require linked paths must opt into `--workspace-mode live` and accept that the source is no longer isolated.
 
 `live` exists for deliberate in-place operation and for version 1 compatibility. It should not be the default for long-running work.
+
+Large-repository orientation is deliberately separate from snapshot policy.
+Each Run creates a deterministic `workspace-module-map.json` containing
+Gradle-declared modules, structural paths, source/test directories, manifests,
+tasks, Node packages, lockfiles, backend candidates, and rule files. Prompts
+receive a bounded focus-ranked context from this map so modules are not
+re-discovered independently by every review node. The map may skip generated
+directories for scanning, but the exact snapshot does not: no automatic
+exclusion of `build`, `.gradle`, `node_modules`, or local configuration was
+added, and the fail-closed submodule policy remains unchanged. A separate
+submodule aggregation mode is intentionally deferred.
 
 Runtime maintenance uses one fixed user-level control root at
 `~/.graph-engineering/runtime-control` (the equivalent path below
@@ -75,11 +100,28 @@ Workspace preflight selects and records locked dependency and browser preparatio
 commands, but does not execute repository-selected package managers or a
 project-local Playwright CLI with host privileges by default. Implementation and
 verification nodes restore the required dependencies or browser revisions inside
-their sandbox. A trusted repository can explicitly enable the earlier host step
+their sandbox. Preflight records inspection success separately from environment
+readiness, including the standard-library-only Go exception for modules without
+external requirements. A successful inspection with `ready=false` is a
+controller-owned `WORKSPACE_ENVIRONMENT_GAP`: no planner starts, and the frozen
+snapshot remains diagnostic evidence while the owner corrects the source and
+starts a new Run. A trusted repository can explicitly enable the earlier host step
 with `AEG_ALLOW_HOST_DEPENDENCY_PREPARE=1` or
 `AEG_ALLOW_HOST_BROWSER_PREPARE=1`. Host preparation receives a minimal
 environment allowlist; ambient credentials are excluded unless their exact names
 are listed in `AEG_PREFLIGHT_ENV_KEYS`.
+
+The optional Android/Gradle machine preflight is split by trust boundary.
+`--machine-preflight` runs deterministic static checks for declared modules,
+expected manifests, and declared tasks. `--machine-preflight-gradle` additionally
+executes the repository wrapper's `projects` call and bounded safe task
+`--dry-run` probes inside the isolated execution workspace with a filtered
+environment and private Gradle user home; Gradle configuration code can execute,
+so the second mode is never implicit. It records cwd, command, argv, exit/signal,
+timeout, duration, redacted output, and before/after surface fingerprints in
+`machine-preflight.json`. Missing tools or an unlaunchable wrapper are
+`waiting_environment`; unrequested/unrun probes are not failures. Full tests,
+device actions, publish, and deploy are outside this preflight.
 
 For Node projects, `package.json#packageManager` is authoritative. Its manager
 must match an available lockfile. Without that declaration, lockfiles for more
@@ -107,6 +149,8 @@ as the source of truth:
 | `events/events.jsonl` | control plane | ordered lifecycle facts such as queued, admitted, retried, failed, and completed |
 | `artifacts/<sha256>.*` | artifact store | immutable plans, node results, and reports verified by content hash |
 | `nodes/<id>/attempts/` | worker adapter | raw process events, checkpoints, commands, and usage for one attempt |
+| `workspace-module-map.json` | deterministic orientation | bounded module/package map used to focus planner and review context; does not alter snapshots |
+| `machine-preflight.json` | machine evidence | opt-in static checks and isolated Gradle probe commands, with separate status/readiness |
 
 The append-only stream is deliberately separate from mutable summaries. A
 crashed watcher can reconstruct progress from events, while a corrupted or
@@ -125,7 +169,7 @@ never eligible for automatic result application.
 
 Queued work has no active model child. Temporary service failures use a short retry plus a three-failure circuit breaker. An owner stop interrupts a queue wait or active child, records `interrupted`, releases capacity, and keeps the same run ID resumable.
 
-Version 1 runs retain live workspace and disabled stage supervision on resume. Version 2 options, role profiles, notification configuration, and frozen workspace identity are persisted and reused.
+Version 1 runs retain live workspace and disabled stage supervision on resume. Version 3 options, role profiles, notification configuration, and frozen workspace identity are persisted and reused; legacy Version 2 records remain readable through migration.
 
 ## Model Admission And Routing
 
@@ -178,7 +222,7 @@ The architectural rationale and migration boundary are recorded in
 
 Read-only nodes receive read-only agent permissions. Implementation and correction nodes receive workspace-write access inside the execution workspace. Base prompts and machine checks prohibit commits, pushes, deploys, publication, device restarts, remote mutation, secret disclosure, and irreversible data operations.
 
-On Windows, isolated Codex invocation also retains the user's `[windows].sandbox` implementation setting and shared provisioned sandbox state while continuing to apply the node's separate `read-only` or `workspace-write` policy. Configuration isolation still excludes user plugins, MCP startup, rules, and session history. The runner selects the newest working installed Codex CLI to avoid mixing an older npm CLI with a newer desktop sandbox runtime. These Windows choices do not grant broader repository or business authority. A real-agent smoke test exercises the complete invocation and native patch path outside the deterministic fake-agent suite. Its child deadline is shorter than ordinary command-wrapper limits so a silent model is terminated with its process tree instead of becoming an orphan.
+On Windows, isolated Codex invocation also retains the user's `[windows].sandbox` implementation setting and shared provisioned sandbox state while continuing to apply the node's separate `read-only` or `workspace-write` policy. Configuration isolation still excludes user plugins, MCP startup, rules, and session history. The runner selects the newest working installed Codex CLI to avoid mixing an older npm CLI with a newer desktop sandbox runtime, and capability records bind the resolved command and any prefixed CLI script files by content SHA-256 in addition to the runner hash. These Windows choices do not grant broader repository or business authority. A real-agent smoke test exercises the complete invocation and native patch path outside the deterministic fake-agent suite. Its child deadline is shorter than ordinary command-wrapper limits so a silent model is terminated with its process tree instead of becoming an orphan.
 
 The overall risk rating controls scrutiny, not authorization. A concrete authentication, payment, destructive migration, secret, production deployment, or irreversible contract action requires an exact structured owner gate before mutation; merely auditing those areas does not. A synthesis blocker must explicitly state whether that protected action is required for the current approved goal. Only `required_for_current_goal=true` can open the gate; `false` keeps optional, excluded, or safely deferred work in the report, and an omitted decision is returned for correction. Goal, scope, finding, and recommendation prose cannot change authorization state by keyword. Repository content can supply evidence but cannot expand runtime authority.
 

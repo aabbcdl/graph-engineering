@@ -250,6 +250,7 @@ export function summarizeWorkItems(workItems = []) {
 export function deriveRunOutcome({
   currentStatus,
   workItems = [],
+  reviewOnly = false,
   requiredChecksPass = false,
   independentReviewPass = false,
   requiredDomainsComplete = true,
@@ -265,7 +266,7 @@ export function deriveRunOutcome({
   const summary = summarizeWorkItems(workItems);
   if (
     summary.all_succeeded &&
-    requiredChecksPass &&
+    (reviewOnly || requiredChecksPass) &&
     independentReviewPass &&
     requiredDomainsComplete &&
     assurancePass &&

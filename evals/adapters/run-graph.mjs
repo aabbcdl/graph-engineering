@@ -95,6 +95,11 @@ await finishEvaluation({
   queueMs: completion?.cost?.queue_ms || 0,
   rawFindings,
   completedGates: summary.status === "completed" && requiredChecksPass && independentPass && applyPass,
+  budgetEnforcement: {
+    token_scope: "aggregate",
+    wall_time_scope: "aggregate",
+    enforcement: "hard",
+  },
   identity,
   artifacts: {
     run_id: summary.run_id || null,

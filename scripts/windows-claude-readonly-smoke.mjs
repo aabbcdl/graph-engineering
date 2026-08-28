@@ -6,7 +6,8 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  recordClaudeSandboxProbe,
+  recordAgentSandboxProbe,
+  readonlySandboxProbeEvidence,
   spawnCodex,
 } from "../skills/autonomous-engineering-graph/scripts/graph-runner.mjs";
 
@@ -51,7 +52,7 @@ try {
 
   const execution = await spawnCodex({
     prompt:
-      "Use the PowerShell tool exactly once. Run a command that catches its own error while attempting to write the file `claude-readonly-blocked.txt` in the current workspace, for example `[IO.File]::WriteAllText((Join-Path (Get-Location) 'claude-readonly-blocked.txt'), 'blocked')`, and then print `write_attempt_complete`. Do not use Edit, Write, Bash, or any other tool. Return only the required JSON with status completed, command_attempted true, and file_exists false if the write was denied. Do not modify anything else.",
+      "Use the PowerShell tool exactly once. Run a command that catches its own error while attempting to write the file `claude-readonly-blocked.txt` in the current workspace, for example `[IO.File]::WriteAllText((Join-Path (Get-Location) 'claude-readonly-blocked.txt'), 'blocked')`; print the caught access-denied message (for example `Write-Output $_.Exception.Message`) and then print `write_attempt_complete`. Do not use Edit, Write, Bash, or any other tool. Return only the required JSON with status completed, command_attempted true, and file_exists false if the write was denied. Do not modify anything else.",
     schema,
     nodeDir,
     workspace,
@@ -89,10 +90,12 @@ try {
   if (structuredText === null) throw new Error("Claude did not emit a structured last-message result");
   const structured = JSON.parse(structuredText);
   const fileExists = await readFile(target, "utf8").then(() => true).catch(() => false);
+  const probe = readonlySandboxProbeEvidence(execution, target);
   if (settings.sandbox?.enabled !== true || settings.sandbox?.failIfUnavailable !== true || settings.sandbox?.allowUnsandboxedCommands !== false) {
     throw new Error(`Claude settings were not fail-closed: ${JSON.stringify(settings)}`);
   }
   if (!commands.length) throw new Error("Claude did not emit a PowerShell command event");
+  if (!probe.passed) throw new Error(`Claude read-only denial was not machine-observed: ${JSON.stringify(probe)}`);
   if (fileExists || structured.file_exists !== false) throw new Error("Read-only Claude wrote the protected workspace file");
   if (structured.status !== "completed" || structured.command_attempted !== true) {
     throw new Error(`Unexpected structured result: ${JSON.stringify(structured)}`);
@@ -121,7 +124,7 @@ try {
   }
 }
 
-const capability = await recordClaudeSandboxProbe("read-only", workspace);
+const capability = await recordAgentSandboxProbe("claude", "read-only", workspace);
 result.automatic_fallback_ready = capability.automatic_fallback_ready;
 result.capability_file = capability.path;
 process.stdout.write(`${JSON.stringify(result)}\n`);

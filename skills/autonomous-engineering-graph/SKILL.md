@@ -51,11 +51,24 @@ Use `start` only for deliberate foreground execution. Launch exactly one
 runner command. Do not implement the same goal in the parent task or start a
 duplicate while the approved run is active or queued.
 
-Version 2 defaults to:
+Version 3 defaults to:
 
 - `--workspace-mode auto`: frozen Git worktree when the supplied path is the Git root/worktree root, or a frozen copy for non-Git and nested paths;
 - `--supervision stage`: artifact-only control gates after planning, synthesis, and implementation; supervisors do not inspect the repository or repeat discovery;
 - `--notify`: one notification for each distinct terminal state.
+
+Use `--mode review` when the user wants an assessment only. The runner then
+compiles discovery, specialist review, synthesis, synthesis supervision, and
+one fresh independent review, all read-only. It does not create implementation,
+verification, correction, or result-application stages; runtime, device, and
+release checks are explicitly deferred and recorded as such. `--minimal` never
+turns a review-mode run into a writer or verifier.
+
+In `--workspace-mode copy`, the execution snapshot intentionally has no `.git`.
+The runner records the source repository's launch-time HEAD, refs/config hashes,
+and short status in `source-repository-before.json` and uses that evidence for a
+matching Git-state requirement. Nodes do not run Git commands against the
+user's source repository to compensate for the copied boundary.
 
 For an already-running exact run, attach the same read-only display manually:
 

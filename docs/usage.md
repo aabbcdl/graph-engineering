@@ -1,5 +1,37 @@
 # Usage
 
+## Mac-First Installation
+
+Graph Engineering is currently distributed as a Mac-first local tool. Give the
+GitHub repository URL to a coding Agent and ask it to read the repository
+README.md, check Node.js 20+, verify a configured Codex or Claude CLI, and run
+the explicit installer. The equivalent terminal flow is:
+
+~~~bash
+git clone https://github.com/aabbcdl/graph-engineering.git
+cd graph-engineering
+npm run install:global
+graph-engineering validate
+graph-engineering doctor --agent-backend codex --json
+~~~
+
+The repository is the canonical source, and the published package provides the
+same Mac-first workflow without a source checkout. The current package has no
+runtime dependencies; the target project's own tools are needed only when its
+requested checks use them. Windows smoke instructions later in this document are
+a separate compatibility gate and are not required for the Mac workflow.
+
+The NPM install flow is:
+
+~~~bash
+npm install -g graph-engineering
+graph-engineering-install
+~~~
+
+`graph-engineering-install` is an explicit, transactional Skill installation
+step. The package does not use an npm `postinstall` hook to silently modify the
+user's `~/.codex/skills` directory.
+
 ## Explicit Opt-In
 
 The installed Skill selects Graph only when the user names Graph Engineering
@@ -55,6 +87,19 @@ Use `--max-run-cost-usd` only with backend-reported cost or a verified
 `waiting_budget` before the next model call. A single finite token overrun is
 recorded and bounded to the completed call; a second call at the ceiling is
 never started.
+
+Before each model process starts, run-level admission reserves a bounded token
+amount and computes capacity from observed usage plus active reservations. A
+node without a reservation waits as `waiting_budget`; it does not launch an
+unreserved process. A process that has already started may finish with a
+bounded terminal usage overrun, so the contract is not an absolute zero-overrun
+guarantee. `budget_exceeded` ends the attempt as a budget stop rather than an
+ordinary worker failure and does not trigger an automatic retry. The first
+budget stop, user stop, or host interruption cancels unfinished siblings in
+the same review wave while preserving completed nodes. Reservation ledger
+entries and `RunBudgetReserved`, `RunBudgetReservationReleased`, and
+`RunBudgetReservationsReclaimed` events explain the accounting; resume clears
+reservations that have no matching live process.
 
 `--assurance auto` selects `standard` for ordinary work and `high` for
 `audit` plans or release checks. High assurance requires an independent review
@@ -175,8 +220,46 @@ Workspace preflight detects locked dependency and browser preparation commands,
 but does not execute a repository-selected package manager or project-local
 Playwright CLI with host privileges by default. The recorded command is run later
 inside an implementation or verification node sandbox when the selected checks
-need it. Preparation evidence is stored in `workspace-preflight.json`; it is
-setup evidence, not a rendering pass.
+need it. A standard-library-only Go module (no external `require`) is ready
+without `go.sum`; a module with external requirements still needs the sum file.
+Preparation evidence is stored in `workspace-preflight.json` and contains both
+`status` (inspection outcome) and `readiness`/`ready` (whether the environment is
+executable); it is setup evidence, not a rendering pass.
+
+Every Run additionally stores the deterministic `workspace-module-map.json`.
+This is an orientation artifact, not a replacement for the exact source
+snapshot. For Android/Gradle it records settings-declared modules, paths,
+source/test directories, manifests, declared tasks, and missing modules. For
+Node/Worker repositories it records bounded package, lockfile, script, and
+backend-candidate metadata, together with discovered rule files. Planner and
+review nodes receive a bounded focus-ranked map context to avoid repeatedly
+walking a large repository. The snapshot rules remain unchanged: Graph does
+not automatically omit `build`, `.gradle`, `node_modules`, or local
+configuration, and submodules remain fail-closed. The public
+`--submodules separate` interface is intentionally not part of this phase.
+
+Android/Gradle checks are opt-in and have two distinct levels:
+
+- `--machine-preflight` performs static module/path/manifest checks only and
+  writes `machine-preflight.json` without running Gradle.
+- `--machine-preflight-gradle` adds the wrapper's `projects` command and up to
+  twelve safe planned-task `--dry-run` probes in the isolated execution
+  workspace, with a filtered environment and private `GRADLE_USER_HOME`.
+
+The second level executes repository Gradle configuration code by design, so
+it must be explicitly requested. It does not run the full test suite, device
+operations, publish, or deploy commands. Each probe records the exact cwd,
+argv, exit code or signal, timeout, duration, redacted output, and before/after
+workspace surface. A missing wrapper or an unavailable Java/Android toolchain
+is an environment gap. `not_requested` and `not_run` mean that no probe was
+executed, not that the repository command failed. For example, a declared but
+missing `:screenshot-demo` module is reported by the static pass before model
+review.
+
+```powershell
+graph-engineering start --workspace "D:\project\example" --goal "Review Android modules" --mode review --machine-preflight --user-approved
+graph-engineering start --workspace "D:\project\example" --goal "Review Android modules" --mode review --machine-preflight-gradle --user-approved
+```
 
 For a trusted repository, host preparation can be enabled explicitly before
 launch:
@@ -209,7 +292,30 @@ model-node environments.
 does not match an available lockfile, preflight stops with
 `DEPENDENCY_LOCK_MISMATCH`. Without `packageManager`, lockfiles belonging to
 multiple managers stop with `DEPENDENCY_LOCK_AMBIGUOUS`; Graph never guesses.
-Dependencies without a supported lockfile also stop before execution.
+Dependencies without a supported lockfile also stop before planner/model
+execution with `WORKSPACE_ENVIRONMENT_GAP`. Because an isolated Run has already
+frozen that source state, correct the source workspace and start a new Run rather
+than resuming the not-ready snapshot.
+
+Use the strict capability doctor before a real Windows run:
+
+```powershell
+graph-engineering doctor --workspace "D:\project\example" --agent-backend codex --json
+```
+
+The doctor is fail-closed on a missing or stale read-only/workspace-write
+record. The record is bound to the current runner hash, platform, architecture,
+and the content SHA-256 of every executable/script file in the resolved invocation;
+rerun the protected Codex/Claude smoke workflow
+after any CLI or runner update. The test-only assurance bypass is accepted only
+when the process is bound to the repository's exact `fake-codex.mjs` fixture;
+setting `AEG_TEST_MODE=1` in an ordinary run does
+not bypass capability or assurance gates, and the doctor always disables it.
+
+The Mac implementation can prepare the runner and its evidence format, but it
+cannot satisfy the Windows smoke gate. Until real protected Windows
+read-only/workspace-write runs exist, Windows readiness stays
+`UNKNOWN`/`waiting_environment`.
 
 Every npm, pnpm, Yarn, or Bun dependency install disables lifecycle scripts. An
 isolated run removes `node_modules` before dependency preparation and never

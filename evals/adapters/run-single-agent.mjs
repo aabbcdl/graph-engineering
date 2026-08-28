@@ -72,6 +72,7 @@ try {
     queueScope: "global",
     runId: `eval-${args.fixtureId}-${args.repetition}-baseline`,
     nodeId: "single-agent",
+    maxTokens: args.tokenBudget,
   });
   if (execution.last_message_path) {
     structured = JSON.parse(await readFile(execution.last_message_path, "utf8"));
@@ -87,6 +88,11 @@ await finishEvaluation({
   queueMs: execution?.queue_ms || 0,
   rawFindings: structured.findings || [],
   completedGates: execution?.exit_code === 0 && structured.completed_gates === true,
+  budgetEnforcement: {
+    token_scope: "aggregate",
+    wall_time_scope: "aggregate",
+    enforcement: "hard",
+  },
   identity: await reportedHarnessIdentity(args, { arm_contract: "codex-single-agent" }),
   artifacts: {
     proof: execution?.proof_path || null,

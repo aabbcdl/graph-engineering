@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -330,9 +331,15 @@ async function installGraphUnderAdmission({ codexHome, binDir, stateRoots, hooks
 
 function isMainModule() {
   if (!process.argv[1]) return false;
-  const modulePath = path.resolve(fileURLToPath(import.meta.url));
-  const invokedPath = path.resolve(process.argv[1]);
-  return process.platform === "win32" ? modulePath.toLowerCase() === invokedPath.toLowerCase() : modulePath === invokedPath;
+  try {
+    const modulePath = path.resolve(fileURLToPath(import.meta.url));
+    const invokedPath = path.resolve(realpathSync(process.argv[1]));
+    return process.platform === "win32"
+      ? modulePath.toLowerCase() === invokedPath.toLowerCase()
+      : modulePath === invokedPath;
+  } catch {
+    return false;
+  }
 }
 
 export { activeRuntimeEvidence, installGraph };

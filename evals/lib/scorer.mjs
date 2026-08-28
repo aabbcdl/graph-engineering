@@ -4,6 +4,12 @@ function sha256(value) {
   return createHash("sha256").update(String(value)).digest("hex");
 }
 
+function canonicalJson(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+}
+
 function finite(value) {
   return Number.isFinite(value) ? Number(value) : null;
 }
@@ -37,6 +43,7 @@ const HARNESS_HASH_FIELDS = [
   "adapters_sha256",
   "manifest_sha256",
 ];
+const HARNESS_CONTRACT_FIELDS = ["budget_contract", "toolchain_contract"];
 const HARNESS_ENVIRONMENT_FIELDS = ["node", "platform", "arch"];
 
 function nonEmptyString(value) {
@@ -64,6 +71,23 @@ function harnessValidationErrors(harness) {
   }
   for (const field of HARNESS_ENVIRONMENT_FIELDS) {
     if (!nonEmptyString(harness.environment?.[field])) errors.push(`harness environment ${field} is missing`);
+  }
+  if (harness.budget_contract !== null && harness.budget_contract !== undefined) {
+    const contract = harness.budget_contract;
+    if (contract?.token_scope !== "aggregate" || contract?.wall_time_scope !== "aggregate" || contract?.enforcement !== "hard") {
+      errors.push("harness budget_contract is invalid");
+    }
+  }
+  if (harness.toolchain_contract !== null && harness.toolchain_contract !== undefined) {
+    const contract = harness.toolchain_contract;
+    if (
+      !nonEmptyString(contract?.ecosystem) ||
+      !nonEmptyString(contract?.version) ||
+      !nonEmptyString(contract?.platform) ||
+      !sha256String(contract?.binary_sha256)
+    ) {
+      errors.push("harness toolchain_contract is invalid");
+    }
   }
   return errors;
 }
@@ -95,6 +119,11 @@ function identityFieldErrors(name, identity, harness) {
     for (const field of HARNESS_ENVIRONMENT_FIELDS) {
       if (identity.environment?.[field] !== harness.environment?.[field]) {
         errors.push(`${name} environment ${field} differs from harness`);
+      }
+    }
+    for (const field of HARNESS_CONTRACT_FIELDS) {
+      if (canonicalJson(identity[field] ?? null) !== canonicalJson(harness[field] ?? null)) {
+        errors.push(`${name} ${field} differs from harness`);
       }
     }
   }
@@ -137,6 +166,17 @@ function comparabilityErrors(pair, harness = null) {
       errors.push(`${name} exceeded token budget: ${used}/${arm.token_budget}`);
     }
     errors.push(...identityFieldErrors(name, arm?.harness_identity, harness));
+    if (harness?.budget_contract) {
+      const enforcement = arm?.budget_enforcement;
+      if (
+        !enforcement ||
+        enforcement.token_scope !== harness.budget_contract.token_scope ||
+        enforcement.wall_time_scope !== harness.budget_contract.wall_time_scope ||
+        enforcement.enforcement !== harness.budget_contract.enforcement
+      ) {
+        errors.push(`${name} budget enforcement does not satisfy the harness contract`);
+      }
+    }
   }
   const graphIdentity = left?.harness_identity;
   const baselineIdentity = right?.harness_identity;

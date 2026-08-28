@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { finished } from "node:stream/promises";
@@ -10,6 +10,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   atomicWriteJson,
+  agentCapabilityPath,
+  agentCapabilityDoctor,
   automaticFallbackBackendAllowed,
   acquireLock,
   acquireModelSlot,
@@ -22,7 +24,12 @@ import {
   codexExecArgs,
   claudeAgentArgs,
   claudeSandboxSettings,
+  claudeSandboxCapabilityPath,
   claudeLastMessageFromEvents,
+  clearResolvedAssuranceBlocker,
+  clearResolvedBudgetBlocker,
+  configureAssurance,
+  recordAgentSandboxProbe,
   recordClaudeSandboxProbe,
   commandExecutables,
   compactResultForDependency,
@@ -45,11 +52,15 @@ import {
   gitStateChanged,
   gcRunCandidates,
   httpStatusesInEvidence,
+  inferGoalMode,
+  invocationIdentity,
+  agentSandboxCapabilityMatches,
   inspectModelQueue,
   isolatedCodexConfigArgs,
   latestCompletedCorrection,
   listRuns,
   makeLoopNode,
+  machineFailuresFromProof,
   modelQueueRoot,
   modelCapacityOutcome,
   mergeRunOptionsForResume,
@@ -69,6 +80,7 @@ import {
   plannerEnvironmentCoverageOverride,
   proofFromClaudeEvents,
   proofFromEvents,
+  readonlySandboxProbeEvidence,
   progressSnapshot,
   queueMutexContentionError,
   RESUME_CLEARABLE_BLOCKERS,
@@ -83,9 +95,11 @@ import {
   runPool,
   saveRun,
   safeGitConfigEnvironment,
+  sourceGitProvenance,
   stateRootUsageSummary,
   shouldRetrySupervisionRecheck,
   transientExecutionFailure,
+  tokenBudgetGuard,
   unsatisfiedCheckIds,
   workspaceFileMap,
   waitForBackgroundHandoff,
@@ -110,6 +124,11 @@ const GRAPH_CONTRACT = path.resolve(TEST_DIR, "..", "..", "references", "graph-c
 const LIFECYCLE_CONTROLLER = path.resolve(TEST_DIR, "..", "..", "references", "lifecycle-controller.md");
 const NODE_RUNTIME_CONTRACT = path.resolve(TEST_DIR, "..", "..", "references", "node-runtime-contract.md");
 const INTEGRATION_TIMEOUT = 60_000;
+// Windows process creation and the installer hash scan can exceed the normal
+// child deadline when the host is under load. Keep the bound finite, but give
+// those deliberately slow integration paths enough room to report a result.
+const SLOW_INTEGRATION_TIMEOUT = 120_000;
+const ACTIVE_MODEL_START_TIMEOUT = 15_000;
 const TEST_QUEUE_ROOT = path.join(os.tmpdir(), `aeg-test-model-queue-${process.pid}`);
 const TEST_CONTROL_ROOT = path.join(os.tmpdir(), `aeg-test-runtime-control-${process.pid}`);
 process.env.AEG_MODEL_QUEUE_ROOT = TEST_QUEUE_ROOT;
@@ -132,6 +151,15 @@ async function temporaryDirectory(t) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "aeg-test-"));
   t.after(async () => rm(directory, { recursive: true, force: true }));
   return directory;
+}
+
+function spawnResultDetails(result) {
+  const details = [result?.error?.message, result?.stderr, result?.stdout]
+    .filter(Boolean)
+    .map(String)
+    .join("\n")
+    .trim();
+  return details || `child exited without output (status=${result?.status ?? "null"}, signal=${result?.signal ?? "none"})`;
 }
 
 async function writeSkill(root, name, description) {
@@ -276,6 +304,8 @@ test("CLI help exposes isolation, supervision, role routing, notifications, and 
   assert.equal(help.status, 0, help.stderr || help.stdout);
   for (const option of [
     "--workspace-mode <auto|live|worktree|copy>",
+    "--machine-preflight",
+    "--machine-preflight-gradle",
     "--supervision <stage|off>",
     "--role-model <role=model>",
     "--role-effort <role=effort>",
@@ -341,7 +371,7 @@ test("first start reports storage locations once without contaminating JSON stdo
   }
   const marker = JSON.parse(await readFile(path.join(stateRoot, ".storage-location-notice-v1.json"), "utf8"));
   assert.equal(marker.paths.state, path.resolve(stateRoot));
-  assert.equal(marker.paths.execution, path.resolve(executionRoot));
+  assert.equal(marker.paths.execution, await realpath(executionRoot));
   assert.equal(marker.paths.queue, path.resolve(queueRoot));
 
   const second = spawnSync(
@@ -1142,6 +1172,91 @@ test("a high-risk audit does not create an owner gate without a concrete protect
   assert.equal(plan.owner_gate.authorization_scope, null);
 });
 
+test("auto assurance does not mistake package metadata for a release task", () => {
+  const ordinary = configureAssurance(
+    { assurance: "auto", agentBackend: "codex", agentFallback: false },
+    {
+      mode: "task",
+      required_checks: [{
+        id: "tests",
+        description: "Run the repository test suite",
+        source: "package.json test script",
+        blocking_scope: "both",
+      }],
+    },
+    process.cwd(),
+  );
+  assert.equal(ordinary.level, "standard");
+  assert.equal(ordinary.pass, true);
+
+  const release = configureAssurance(
+    { assurance: "auto", agentBackend: "codex", agentFallback: false },
+    {
+      mode: "task",
+      required_checks: [{
+        id: "release-package",
+        description: "Build the release package",
+        source: "release workflow",
+        blocking_scope: "both",
+      }],
+    },
+    process.cwd(),
+  );
+  assert.equal(release.level, "high");
+});
+
+test("auto assurance keeps review-only deferred release checks at standard", () => {
+  const review = configureAssurance(
+    { assurance: "auto", agentBackend: "codex", agentFallback: false },
+    {
+      mode: "review",
+      required_checks: [{
+        id: "macos-clean-release",
+        description: "Verify the signed Apple Silicon release package on a clean Mac",
+        source: "release workflow",
+        blocking_scope: "both",
+      }],
+    },
+    process.cwd(),
+  );
+  assert.equal(review.level, "standard");
+  assert.equal(review.pass, true);
+  assert.equal(review.status, "ready");
+});
+
+test("a resumed assurance wait clears once review assurance is satisfied", () => {
+  const run = {
+    assurance: { pass: true },
+    blocker: {
+      type: "ASSURANCE_ENVIRONMENT_REQUIRED",
+      reason: "stale assurance wait",
+    },
+    runner_error: "stale assurance wait",
+  };
+  assert.equal(clearResolvedAssuranceBlocker(run), true);
+  assert.equal(run.blocker, null);
+  assert.equal(run.runner_error, null);
+  assert.equal(RESUME_CLEARABLE_BLOCKERS.has("ASSURANCE_ENVIRONMENT_REQUIRED"), true);
+});
+
+test("an increased budget clears the previous budget blocker and its budget record", () => {
+  const run = {
+    budget: {
+      pass: true,
+      blocker: { reason: "tokens_exhausted" },
+    },
+    blocker: {
+      type: "RUN_BUDGET_EXHAUSTED",
+      reason: "stale budget wait",
+    },
+    runner_error: "stale budget wait",
+  };
+  assert.equal(clearResolvedBudgetBlocker(run), true);
+  assert.equal(run.budget.blocker, null);
+  assert.equal(run.blocker, null);
+  assert.equal(run.runner_error, null);
+});
+
 test("reviewing production release topology never overrides a structured no-gate decision", () => {
   const plan = normalizePlannerResult(
     {
@@ -1803,6 +1918,56 @@ test("ecosystem preflight records missing and ambiguous locks instead of inventi
   assert.deepEqual(ambiguousPlan.args, []);
 });
 
+test("standard-library-only Go modules do not require a synthetic go.sum", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "stdlib-go");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(workspace, "go.mod"), "module example.com/stdlib\n\ngo 1.22\n", "utf8");
+  const plan = await workspacePreflightTest.planGoProject(workspace);
+  assert.equal(plan.status, "ready");
+  assert.equal(plan.action, "none");
+  assert.deepEqual(plan.lockfiles, []);
+  assert.equal(plan.dependency_mode, "stdlib-only");
+  const preparation = await prepareExecutionWorkspace({ workspace, isolated: true });
+  assert.equal(preparation.status, "pass");
+  assert.equal(preparation.readiness, "ready");
+  assert.equal(preparation.ready, true);
+  assert.deepEqual(preparation.environment_gaps || [], []);
+});
+
+test("Go modules with external requirements still need go.sum", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "external-go");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(
+    path.join(workspace, "go.mod"),
+    "module example.com/external\n\ngo 1.22\n\nrequire golang.org/x/sync v0.7.0\n",
+    "utf8",
+  );
+  const plan = await workspacePreflightTest.planGoProject(workspace);
+  assert.equal(plan.status, "missing-lock");
+  assert.equal(plan.action, "environment_gap");
+  assert.equal(plan.dependency_mode, "external");
+  const preparation = await prepareExecutionWorkspace({ workspace, isolated: true });
+  assert.equal(preparation.status, "pass");
+  assert.equal(preparation.readiness, "environment_gap");
+  assert.equal(preparation.ready, false);
+  assert.equal(preparation.environment_gaps.length, 1);
+  assert.equal(preparation.environment_gaps[0].status, "missing-lock");
+});
+
+test("preflight separates successful inspection from environment readiness", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "unlocked-python");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(workspace, "pyproject.toml"), "[project]\nname = 'unlocked'\n", "utf8");
+  const preparation = await prepareExecutionWorkspace({ workspace, isolated: true });
+  assert.equal(preparation.status, "pass");
+  assert.equal(preparation.readiness, "environment_gap");
+  assert.equal(preparation.ready, false);
+  assert.ok(preparation.environment_gaps.some((gap) => gap.ecosystem === "python"));
+});
+
 test("workspace preflight disables lifecycle scripts for every supported Node package manager", async (t) => {
   const root = await temporaryDirectory(t);
   const fixtures = [
@@ -1862,6 +2027,29 @@ test("workspace dependency preparation never runs repository lifecycle scripts",
   assert.equal(preparation.plans[0].lifecycle_scripts, "disabled");
   assert.ok(preparation.commands[0].args.includes("--ignore-scripts"));
   assert.equal(await readFile(marker, "utf8").catch(() => null), null);
+});
+
+test("Windows batch package managers preserve command paths containing spaces", (t) => {
+  if (process.platform !== "win32") {
+    t.skip("Windows cmd.exe contract");
+    return;
+  }
+  const invocation = workspacePreflightTest.portableInvocation(
+    "C:\\Program Files\\nodejs\\npm.cmd",
+    ["ci", "--ignore-scripts"],
+  );
+  assert.match(invocation.command, /cmd\.exe$/i);
+  assert.deepEqual(invocation.args, [
+    "/d",
+    "/s",
+    "/c",
+    'call "C:\\Program Files\\nodejs\\npm.cmd" ci --ignore-scripts',
+  ]);
+  assert.equal(invocation.windowsVerbatimArguments, true);
+  assert.equal(
+    workspacePreflightTest.portableInvocation("C:\\Program Files\\nodejs\\node.exe", ["fixture with spaces"]).windowsVerbatimArguments,
+    false,
+  );
 });
 
 test("workspace preflight honors packageManager and rejects ambiguous or mismatched lockfiles", async (t) => {
@@ -2157,6 +2345,161 @@ test("Windows automatic fallback excludes Claude until both native sandbox probe
   assert.equal(writer.automatic_fallback_ready, true);
   assert.equal(automaticFallbackBackendAllowed("claude", root), true);
   assert.equal(fallbackBackendOrder("codex", root).includes("claude"), true);
+});
+
+test("Claude capability probes use the same configurable record path for writes and reads", () => {
+  const previousShared = process.env.AEG_CLAUDE_SANDBOX_CAPABILITY_FILE;
+  const previousGeneric = process.env.AEG_CLAUDE_CAPABILITY_FILE;
+  const target = path.join(os.tmpdir(), `aeg-claude-capability-${process.pid}.json`);
+  delete process.env.AEG_CLAUDE_SANDBOX_CAPABILITY_FILE;
+  process.env.AEG_CLAUDE_CAPABILITY_FILE = target;
+  try {
+    assert.equal(claudeSandboxCapabilityPath(), target);
+    assert.equal(claudeSandboxCapabilityPath(), agentCapabilityPath("claude"));
+  } finally {
+    if (previousShared === undefined) delete process.env.AEG_CLAUDE_SANDBOX_CAPABILITY_FILE;
+    else process.env.AEG_CLAUDE_SANDBOX_CAPABILITY_FILE = previousShared;
+    if (previousGeneric === undefined) delete process.env.AEG_CLAUDE_CAPABILITY_FILE;
+    else process.env.AEG_CLAUDE_CAPABILITY_FILE = previousGeneric;
+  }
+});
+
+test("agent capability identity rejects same-metadata executable replacement", async (t) => {
+  const root = await temporaryDirectory(t);
+  const executable = path.join(root, "agent-binary.fixture");
+  await writeFile(executable, "aaaaaa", "utf8");
+  const fixedTime = new Date("2020-01-01T00:00:00.000Z");
+  await utimes(executable, fixedTime, fixedTime);
+  const before = invocationIdentity({ command: executable, prefix: [] }, root);
+  await writeFile(executable, "bbbbbb", "utf8");
+  await utimes(executable, fixedTime, fixedTime);
+  const after = invocationIdentity({ command: executable, prefix: [] }, root);
+
+  assert.equal(before.size, after.size);
+  assert.equal(before.mtime_ms, after.mtime_ms);
+  assert.notEqual(before.content_sha256, after.content_sha256);
+
+  const record = {
+    version: 3,
+    backend: "codex",
+    platform: process.platform,
+    arch: process.arch,
+    runner_sha256: "runner-fixture",
+    invocation: before,
+    probes: { "read-only": { passed_at: new Date().toISOString() }, "workspace-write": { passed_at: new Date().toISOString() } },
+  };
+  assert.equal(agentSandboxCapabilityMatches(record, { ...record, invocation: before }), true);
+  assert.equal(agentSandboxCapabilityMatches(record, { ...record, invocation: after }), false);
+  assert.equal(agentSandboxCapabilityMatches({ ...record, version: 2 }, { ...record, invocation: before }), false);
+});
+
+test("agent capability identity binds a prefixed CLI script", async (t) => {
+  const root = await temporaryDirectory(t);
+  const script = path.join(root, "agent-cli.fixture.mjs");
+  const fixedTime = new Date("2020-01-01T00:00:00.000Z");
+  await writeFile(script, "aaaaaa", "utf8");
+  await utimes(script, fixedTime, fixedTime);
+  const before = invocationIdentity({ command: process.execPath, prefix: [script] }, root);
+  await writeFile(script, "bbbbbb", "utf8");
+  await utimes(script, fixedTime, fixedTime);
+  const after = invocationIdentity({ command: process.execPath, prefix: [script] }, root);
+
+  assert.notDeepEqual(before.prefix_files, after.prefix_files);
+  assert.notEqual(before.prefix_files[0].content_sha256, after.prefix_files[0].content_sha256);
+});
+
+test("concurrent capability probes merge both sandbox dimensions", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("Windows capability record contract");
+    return;
+  }
+  const root = await temporaryDirectory(t);
+  const capabilityFile = path.join(root, "codex.json");
+  const previousCommand = process.env.AEG_CODEX_COMMAND_JSON;
+  const previousCapability = process.env.AEG_CODEX_CAPABILITY_FILE;
+  process.env.AEG_CODEX_COMMAND_JSON = JSON.stringify([process.execPath, FAKE_CODEX]);
+  process.env.AEG_CODEX_CAPABILITY_FILE = capabilityFile;
+  t.after(() => {
+    if (previousCommand === undefined) delete process.env.AEG_CODEX_COMMAND_JSON;
+    else process.env.AEG_CODEX_COMMAND_JSON = previousCommand;
+    if (previousCapability === undefined) delete process.env.AEG_CODEX_CAPABILITY_FILE;
+    else process.env.AEG_CODEX_CAPABILITY_FILE = previousCapability;
+  });
+  await Promise.all([
+    recordAgentSandboxProbe("codex", "read-only", root),
+    recordAgentSandboxProbe("codex", "workspace-write", root),
+  ]);
+  const record = JSON.parse(await readFile(capabilityFile, "utf8"));
+  assert.ok(record.probes?.["read-only"]?.passed_at);
+  assert.ok(record.probes?.["workspace-write"]?.passed_at);
+});
+
+test("test-only capability bypass requires the repository fake-agent binding", () => {
+  const matrix = {
+    backend: "codex",
+    installed: { status: "PASS", value: "codex" },
+    invocable: { status: "PASS", value: "fixture" },
+    "read-sandbox-verified": { status: "WARN", value: "unverified" },
+    "write-sandbox-verified": { status: "WARN", value: "unverified" },
+    "automatic-fallback-ready": { status: "WARN", value: "not-ready" },
+  };
+  const previousMode = process.env.AEG_TEST_MODE;
+  const previousCommand = process.env.AEG_CODEX_COMMAND_JSON;
+  const previousClaudeCommand = process.env.AEG_CLAUDE_COMMAND_JSON;
+  const previousScenario = process.env.AEG_FAKE_SCENARIO;
+  process.env.AEG_TEST_MODE = "1";
+  delete process.env.AEG_CODEX_COMMAND_JSON;
+  delete process.env.AEG_CLAUDE_COMMAND_JSON;
+  delete process.env.AEG_FAKE_SCENARIO;
+  try {
+    assert.equal(agentCapabilityDoctor({ backend: "codex", matrix, strict: true }).status, "blocked");
+    process.env.AEG_CODEX_COMMAND_JSON = JSON.stringify([process.execPath, FAKE_CODEX]);
+    process.env.AEG_FAKE_SCENARIO = "happy";
+    assert.equal(agentCapabilityDoctor({ backend: "codex", matrix, strict: true }).status, "ready");
+    assert.equal(agentCapabilityDoctor({ backend: "claude", matrix: { ...matrix, backend: "claude" }, strict: true }).status, "blocked");
+  } finally {
+    if (previousMode === undefined) delete process.env.AEG_TEST_MODE;
+    else process.env.AEG_TEST_MODE = previousMode;
+    if (previousCommand === undefined) delete process.env.AEG_CODEX_COMMAND_JSON;
+    else process.env.AEG_CODEX_COMMAND_JSON = previousCommand;
+    if (previousClaudeCommand === undefined) delete process.env.AEG_CLAUDE_COMMAND_JSON;
+    else process.env.AEG_CLAUDE_COMMAND_JSON = previousClaudeCommand;
+    if (previousScenario === undefined) delete process.env.AEG_FAKE_SCENARIO;
+    else process.env.AEG_FAKE_SCENARIO = previousScenario;
+  }
+});
+
+test("read-only smoke evidence requires a host-observed denied write", () => {
+  const noOp = readonlySandboxProbeEvidence({
+    sandbox: "read-only",
+    commands: [],
+    tool_calls: [],
+    machine_failures: [],
+  }, "blocked.txt");
+  assert.equal(noOp.passed, false);
+
+  const denied = readonlySandboxProbeEvidence({
+    sandbox: "read-only",
+    commands: [{ command: "[IO.File]::WriteAllText('blocked.txt', 'x')", exit_code: 0, status: "completed" }],
+    tool_calls: [],
+    machine_failures: [{ type: "sandbox_write_denied", operation: "WriteAllText" }],
+  }, "blocked.txt");
+  assert.equal(denied.passed, true);
+});
+
+test("machine proof recognizes a caught PowerShell write denial", () => {
+  const failures = machineFailuresFromProof({
+    sandbox: "read-only",
+    commands: [{
+      command: "[IO.File]::WriteAllText('blocked.txt', 'x')",
+      exit_code: 0,
+      status: "completed",
+      output_excerpt: "Access is denied",
+    }],
+    tool_calls: [],
+    errors: [],
+  });
+  assert.ok(failures.some((failure) => failure.type === "sandbox_write_denied"));
 });
 
 test("claude node arguments deny file mutation for a read-only node", () => {
@@ -2931,7 +3274,28 @@ test("discoverSkills prefers project instructions over global duplicates", async
   assert.ok(catalog.some((skill) => skill.name === "global-only"));
 });
 
-test("bundled graph specialist names cannot be shadowed by a project skill", async (t) => {
+test("an empty user home still discovers every bundled graph specialist", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const codexHome = path.join(root, "empty-codex-home");
+  await mkdir(workspace, { recursive: true });
+  const catalog = await discoverSkills(workspace, codexHome);
+  assert.deepEqual(
+    catalog.filter((skill) => skill.origin === "bundled").map((skill) => skill.name),
+    [
+      "graph-engineering-quality",
+      "graph-experience-quality",
+      "graph-incident-analysis",
+      "graph-product-quality",
+      "graph-release-assurance",
+      "graph-requirements-design",
+      "graph-security-privacy",
+    ],
+  );
+  assert.equal(catalog.some((skill) => skill.name === "autonomous-engineering-graph"), false);
+});
+
+test("bundled graph specialist names cannot be shadowed by project or global skills", async (t) => {
   const root = await temporaryDirectory(t);
   const workspace = path.join(root, "workspace");
   const codexHome = path.join(root, "codex-home");
@@ -2940,8 +3304,9 @@ test("bundled graph specialist names cannot be shadowed by a project skill", asy
   await writeSkill(codexHome, "graph-security-privacy", "trusted global specialist");
   const catalog = await discoverSkills(workspace, codexHome);
   const specialist = catalog.find((skill) => skill.name === "graph-security-privacy");
-  assert.equal(specialist?.origin, "global");
-  assert.equal(specialist?.description, "trusted global specialist");
+  assert.equal(specialist?.origin, "bundled");
+  assert.notEqual(specialist?.description, "untrusted project shadow");
+  assert.notEqual(specialist?.description, "trusted global specialist");
   assert.equal(catalog.some((skill) => skill.name === "graph-release-assurance-override"), false);
 });
 
@@ -4171,6 +4536,160 @@ test("a required command counts only inside a single known shell wrapper", () =>
   assert.ok(unrelated.findings.some((finding) => finding.id === "RUNNER-REQUIRED-CHECK-full-test-suite"));
 });
 
+test("review mode compiles a fully read-only graph without implementation or verification", () => {
+  const catalog = [{ name: "reviewer", description: "review", path: "x", origin: "global", sha256: "a", bytes: 1 }];
+  const plan = normalizePlannerResult(
+    {
+      task_summary: "read-only review",
+      mode: "review",
+      scope: ["."],
+      risk_level: "medium",
+      completion_criteria: ["review evidence is recorded"],
+      required_checks: [{ id: "unit", description: "Run unit tests", command: "npm test" }],
+      discovery_skills: [],
+      review_nodes: [{ id: "behavior", title: "Behavior", focus: "behavior", skills: ["reviewer"] }],
+      implementation_skills: ["reviewer"],
+      verification_skills: ["reviewer"],
+      excluded_surfaces: [],
+    },
+    catalog,
+  );
+  const graph = compileGraph(plan);
+
+  assert.equal(graph.review_only, true);
+  assert.deepEqual(graph.nodes.map((node) => node.id), [
+    "planner-supervision",
+    "discovery",
+    "review-behavior",
+    "synthesis",
+    "synthesis-supervision",
+    "independent-review",
+  ]);
+  assert.equal(graph.nodes.some((node) => ["implementation", "verification", "correction"].includes(node.kind)), false);
+  assert.deepEqual(graph.mandatory_gates, [
+    "planner-supervision",
+    "synthesis-supervision",
+    "independent-review",
+    "local-report",
+  ]);
+  assert.equal(nodeSandboxMode(graph.nodes.at(-1)), "read-only");
+  assert.equal(graph.nodes.at(-1).read_only, true);
+  assert.equal(graph.nodes.every((node) => node.read_only !== false && node.review_only === true), true);
+});
+
+test("copy-mode Git provenance is reduced to safe source evidence", () => {
+  const provenance = sourceGitProvenance({
+    workspace: "/path/to/project/example",
+    generated_at: "2026-08-27T00:00:00.000Z",
+    git: true,
+    head: "abc123",
+    refs_sha256: "refs-hash",
+    git_config_sha256: "config-hash",
+    status: " M src/example.ts\n?? notes.md\n",
+  });
+  assert.deepEqual(provenance, {
+    available: true,
+    workspace: "/path/to/project/example",
+    observed_at: "2026-08-27T00:00:00.000Z",
+    head: "abc123",
+    refs_sha256: "refs-hash",
+    git_config_sha256: "config-hash",
+    status: " M src/example.ts\n?? notes.md\n",
+  });
+});
+
+test("macOS zsh command events satisfy required command evidence", () => {
+  const result = ensureNodeResultConsistency(
+    {
+      status: "completed",
+      gate: "pass",
+      summary: "verified through macOS zsh",
+      skills_applied: [],
+      evidence: [],
+      findings: [],
+      commands: [{ command: "npm test", exit_code: 0, summary: "passed" }],
+      checks: [{ id: "tests", status: "pass", command: "npm test", evidence: "3 tests passed" }],
+      files_changed: [],
+      blockers: [],
+      next_actions: [],
+    },
+    { kind: "verification" },
+    {
+      commands: [{ command: "/bin/zsh -lc 'npm test'", exit_code: 0 }],
+      tool_calls: [{ type: "command_execution", name: "shell", status: "completed" }],
+    },
+    [],
+    [],
+    [{ id: "tests", description: "Run the repository test suite", command: "npm test", source: "package.json" }],
+  );
+  assert.equal(result.status, "completed");
+  assert.equal(result.gate, "pass");
+  assert.equal(result.machine_check_evaluation.checks[0].status, "pass");
+});
+
+test("source Git snapshot can be the only verification evidence in copy mode", () => {
+  const result = ensureNodeResultConsistency(
+    {
+      status: "completed",
+      gate: "pass",
+      summary: "verified from the source launch snapshot",
+      skills_applied: [],
+      evidence: [],
+      findings: [],
+      commands: [],
+      checks: [],
+      files_changed: [],
+      blockers: [],
+      next_actions: [],
+    },
+    { kind: "verification" },
+    { commands: [], tool_calls: [] },
+    [],
+    [],
+    [{
+      id: "git-state",
+      description: "Confirm the source repository Git state",
+      command: null,
+      source_evidence: "source_git_snapshot",
+      blocking_scope: "both",
+    }],
+    { sourceGit: { available: true, observed_at: "launch" } },
+  );
+  assert.equal(result.status, "completed");
+  assert.equal(result.gate, "pass");
+  assert.equal(result.machine_check_evaluation.checks[0].observed_source, "source_git_snapshot");
+  assert.equal(result.findings.some((finding) => finding.id === "RUNNER-EVIDENCE-GAP"), false);
+});
+
+test("review-only environment gaps remain deferred instead of failing the static gate", () => {
+  const result = ensureNodeResultConsistency(
+    {
+      status: "blocked",
+      gate: "blocked",
+      summary: "A browser environment is not running",
+      skills_applied: [],
+      evidence: [],
+      findings: [],
+      commands: [],
+      files_changed: [],
+      blockers: [{
+        type: "ENVIRONMENT_REQUIRED",
+        reason: "Browser environment unavailable",
+        unblock_condition: "Start the browser environment later",
+      }],
+      next_actions: [],
+    },
+    { kind: "independent_review", review_only: true },
+    { commands: [], tool_calls: [] },
+    [],
+    [],
+  );
+  assert.equal(result.status, "completed");
+  assert.equal(result.gate, "pass");
+  assert.equal(result.deferred_environment_gaps.length, 1);
+  assert.match(result.next_actions.join("\n"), /review-only mode/i);
+});
+
 test("exact command claims reject paraphrases while explicit equivalents remain available", () => {
   const observed = [
     { command: "git diff -- math.test.mjs", exit_code: 0 },
@@ -4269,7 +4788,7 @@ test("exact command claims reject paraphrases while explicit equivalents remain 
 });
 
 test("Windows PowerShell command evidence matches the unwrapped agent claim", () => {
-  const skillPath = "D:\\ai-data\\skills\\codex-skills\\autonomous-engineering-graph\\SKILL.md";
+  const skillPath = "D:\\path\\to\\skills\\codex-skills\\autonomous-engineering-graph\\SKILL.md";
   const claimedCommand = `Get-Content -Raw '${skillPath}'`;
   const observedCommand =
     '"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe" -Command "Get-Content -Raw \'D:\\\\ai-data\\\\skills\\\\codex-skills\\\\autonomous-engineering-graph\\\\SKILL.md\'"';
@@ -4365,6 +4884,42 @@ test("independent review tolerates a failed ancillary command when its successfu
   );
   assert.equal(result.status, "completed");
   assert.equal(result.gate, "pass");
+  assert.equal(result.findings.some((finding) => finding.id === "RUNNER-EVIDENCE-GAP"), false);
+});
+
+test("verification tolerates a failed ancillary scope probe when required checks pass", () => {
+  const result = ensureNodeResultConsistency(
+    {
+      status: "completed",
+      gate: "pass",
+      summary: "verification passed; Git scope probe is unavailable in the copy",
+      skills_applied: [],
+      evidence: [],
+      findings: [],
+      commands: [
+        { command: "npm test", exit_code: 0, summary: "tests passed" },
+        { command: "git status --short", exit_code: 128, summary: "not a git repository" },
+      ],
+      checks: [{ id: "tests", status: "pass", command: "npm test", evidence: "3 tests passed" }],
+      files_changed: [],
+      blockers: [],
+      next_actions: [],
+    },
+    { kind: "verification" },
+    {
+      commands: [
+        { command: "/bin/zsh -lc 'npm test'", exit_code: 0 },
+        { command: "/bin/zsh -lc 'git status --short'", exit_code: 128 },
+      ],
+      tool_calls: [{ type: "command_execution", name: "shell", status: "completed" }],
+    },
+    [],
+    [],
+    [{ id: "tests", description: "Run the repository test suite", command: "npm test", source: "package.json" }],
+  );
+  assert.equal(result.status, "completed");
+  assert.equal(result.gate, "pass");
+  assert.equal(result.machine_check_evaluation.checks[0].status, "pass");
   assert.equal(result.findings.some((finding) => finding.id === "RUNNER-EVIDENCE-GAP"), false);
 });
 
@@ -5090,7 +5645,7 @@ test("dependency preparation fails before planner model usage", async (t) => {
     ],
     {
       encoding: "utf8",
-      timeout: 30_000,
+      timeout: SLOW_INTEGRATION_TIMEOUT,
       env: {
         ...process.env,
         AEG_CODEX_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
@@ -5098,12 +5653,67 @@ test("dependency preparation fails before planner model usage", async (t) => {
       },
     },
   );
-  assert.equal(result.status, 2, result.stderr || result.stdout);
+  assert.equal(result.status, 2, spawnResultDetails(result));
   const summary = JSON.parse(result.stdout.trim());
   const run = JSON.parse(await readFile(path.join(summary.run_dir, "run.json"), "utf8"));
   const preflight = JSON.parse(await readFile(path.join(summary.run_dir, "workspace-preflight.json"), "utf8"));
   assert.equal(run.blocker.type, "WORKSPACE_PREPARATION_FAILED");
   assert.equal(preflight.status, "fail");
+  assert.equal(await readFile(path.join(summary.run_dir, "nodes", "planner", "attempts.json"), "utf8").catch(() => null), null);
+});
+
+test("an ecosystem readiness gap stops before planner model usage", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const stateRoot = path.join(root, "state");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(
+    path.join(workspace, "pyproject.toml"),
+    "[project]\nname = 'missing-lock-fixture'\nversion = '1.0.0'\ndependencies = ['requests==2.32.3']\n",
+    "utf8",
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      RUNNER,
+      "start",
+      "--user-approved",
+      "--workspace",
+      workspace,
+      "--state-root",
+      stateRoot,
+      "--goal",
+      "Repair the fixture without wasting a model call when its Python environment is not reproducible",
+      "--json",
+    ],
+    {
+      encoding: "utf8",
+      timeout: SLOW_INTEGRATION_TIMEOUT,
+      env: {
+        ...process.env,
+        AEG_CODEX_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
+        AEG_FAKE_SCENARIO: "happy",
+      },
+    },
+  );
+
+  assert.equal(result.status, 2, spawnResultDetails(result));
+  const summary = JSON.parse(result.stdout.trim());
+  const run = JSON.parse(await readFile(path.join(summary.run_dir, "run.json"), "utf8"));
+  const preflight = JSON.parse(await readFile(path.join(summary.run_dir, "workspace-preflight.json"), "utf8"));
+  assert.equal(run.status, "blocked");
+  assert.equal(run.blocker.type, "WORKSPACE_ENVIRONMENT_GAP");
+  assert.match(run.blocker.unblock_condition, /correct.*source workspace.*start a new Graph run/i);
+  assert.ok(
+    !run.nodes.planner ||
+      (run.nodes.planner.status === "blocked" && (run.nodes.planner.attempts || 0) === 0),
+    "planner must be absent or explicitly blocked before any attempt",
+  );
+  assert.equal(preflight.status, "pass");
+  assert.equal(preflight.readiness, "environment_gap");
+  assert.equal(preflight.ready, false);
+  assert.ok(preflight.environment_gaps.some((gap) => gap.ecosystem === "python" && gap.status === "missing-lock"));
   assert.equal(await readFile(path.join(summary.run_dir, "nodes", "planner", "attempts.json"), "utf8").catch(() => null), null);
 });
 
@@ -5369,6 +5979,126 @@ test("runs blocked by a Git state change cannot adopt that state as a resume bas
   );
 });
 
+test("review mode runs a read-only graph and never exports an applicable result", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const stateRoot = path.join(root, "state");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(workspace, "fixture.txt"), "fixture\n", "utf8");
+  await writeSkill(path.join(workspace, ".codex"), "fixture-review", "Review the graph fixture");
+  const execution = spawnSync(
+    process.execPath,
+    [
+      RUNNER,
+      "start",
+      "--user-approved",
+      "--workspace",
+      workspace,
+      "--workspace-mode",
+      "copy",
+      "--state-root",
+      stateRoot,
+      "--goal",
+      "Review the fixture without changing it",
+      "--mode",
+      "review",
+      "--minimal",
+      "--timeout-minutes",
+      "1",
+      "--json",
+    ],
+    {
+      encoding: "utf8",
+      timeout: INTEGRATION_TIMEOUT,
+      env: {
+        ...process.env,
+        AEG_CODEX_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
+        AEG_FAKE_SCENARIO: "happy",
+      },
+    },
+  );
+  assert.equal(execution.status, 0, execution.stderr || execution.stdout);
+  const summary = JSON.parse(execution.stdout.trim());
+  assert.equal(summary.status, "completed");
+  const run = JSON.parse(await readFile(path.join(summary.run_dir, "run.json"), "utf8"));
+  const graph = JSON.parse(await readFile(path.join(summary.run_dir, "graph.json"), "utf8"));
+  const completion = JSON.parse(await readFile(path.join(summary.run_dir, "completion.json"), "utf8"));
+  const metadata = JSON.parse(await readFile(path.join(summary.run_dir, "results", "metadata.json"), "utf8"));
+  assert.equal(run.plan.mode, "review");
+  assert.equal(graph.review_only, true);
+  assert.equal(graph.nodes.some((node) => ["implementation", "verification", "correction"].includes(node.kind)), false);
+  assert.equal(graph.nodes.every((node) => node.review_only === true && node.read_only !== false), true);
+  assert.equal(run.workspace_preflight.status, "not_applicable");
+  assert.equal(completion.review_only, true);
+  assert.equal(completion.review_completed, true);
+  assert.equal(completion.application_ready, false);
+  assert.equal(completion.release_ready, false);
+  assert.equal(run.results.review_only, true);
+  assert.equal(run.results.eligible_to_apply, false);
+  assert.match(run.results.rejection_reason, /review-only/);
+  assert.equal(metadata.review_only, true);
+  assert.equal(metadata.eligible_to_apply, false);
+  assert.equal(await readFile(path.join(summary.run_dir, "results", "apply.mjs"), "utf8").catch(() => null), null);
+  assert.deepEqual((await readdir(workspace)).sort(), [".codex", "fixture.txt"]);
+});
+
+test("copy-mode verification uses the source Git snapshot without probing the copy", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const stateRoot = path.join(root, "state");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(workspace, "fixture.txt"), "fixture\n", "utf8");
+  await writeSkill(path.join(workspace, ".codex"), "fixture-review", "Review the graph fixture");
+  for (const args of [
+    ["init"],
+    ["add", "."],
+    ["-c", "user.name=Graph Test", "-c", "user.email=graph@example.invalid", "commit", "-m", "fixture"],
+  ]) {
+    const result = spawnSync("git", args, { cwd: workspace, encoding: "utf8", windowsHide: true });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  }
+  const execution = spawnSync(
+    process.execPath,
+    [
+      RUNNER,
+      "start",
+      "--user-approved",
+      "--workspace",
+      workspace,
+      "--workspace-mode",
+      "copy",
+      "--state-root",
+      stateRoot,
+      "--goal",
+      "Repair the fixture while preserving source Git evidence",
+      "--timeout-minutes",
+      "1",
+      "--json",
+    ],
+    {
+      encoding: "utf8",
+      timeout: INTEGRATION_TIMEOUT,
+      env: {
+        ...process.env,
+        AEG_CODEX_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
+        AEG_FAKE_SCENARIO: "source-git-check",
+      },
+    },
+  );
+  assert.equal(execution.status, 0, execution.stderr || execution.stdout);
+  const summary = JSON.parse(execution.stdout.trim());
+  assert.equal(summary.status, "completed");
+  const run = JSON.parse(await readFile(path.join(summary.run_dir, "run.json"), "utf8"));
+  const completion = JSON.parse(await readFile(path.join(summary.run_dir, "completion.json"), "utf8"));
+  const gitCheck = completion.machine_check_evaluation.checks.find((check) => check.id === "git-state");
+  assert.equal(run.source_git.available, true);
+  assert.equal(run.plan.required_checks.find((check) => check.id === "git-state").source_evidence, "source_git_snapshot");
+  assert.equal(gitCheck.status, "pass");
+  assert.equal(gitCheck.observed_source, "source_git_snapshot");
+  assert.equal(run.results.eligible_to_apply, true);
+  assert.equal(await readFile(path.join(workspace, "graph-output.txt"), "utf8").catch(() => null), null);
+});
+
 test("submit returns immediately and a detached runner completes the same saved run", async (t) => {
   const root = await temporaryDirectory(t);
   const workspace = path.join(root, "workspace");
@@ -5562,6 +6292,35 @@ test("runPool waits for all started work and drains the queue before rejecting",
     /fixture failure/,
   );
   assert.deepEqual(completed.sort(), [0, 1, 2]);
+});
+
+test("runPool cancels an unfinished wave after a budget exhaustion", async () => {
+  const started = [];
+  const cancelled = [];
+  const budgetError = Object.assign(new Error("fixture budget exhausted"), {
+    code: "RUN_BUDGET_EXHAUSTED",
+  });
+  await assert.rejects(
+    runPool([0, 1, 2], 2, async (item, _index, { signal }) => {
+      started.push(item);
+      if (item === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        throw budgetError;
+      }
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, 250);
+        signal.addEventListener("abort", () => {
+          clearTimeout(timer);
+          cancelled.push(item);
+          reject(signal.reason || new Error("wave cancelled"));
+        }, { once: true });
+      });
+      return item;
+    }, { cancelOnError: true, cancelOn: (error) => error?.code === "RUN_BUDGET_EXHAUSTED" }),
+    /fixture budget exhausted/,
+  );
+  assert.deepEqual(started.sort(), [0, 1]);
+  assert.deepEqual(cancelled, [1]);
 });
 
 test("stale run locks are reclaimed while active locks are rejected", async (t) => {
@@ -5899,6 +6658,79 @@ test("complete graph runs through a fake Codex process and emits auditable evide
   assert.match(report, /Status: \*\*completed\*\*/);
   assert.match(report, /fixture-review/);
   assert.match(report, /fake-check verification/);
+});
+
+test("stream budget exhaustion waits without retrying or leaving a reservation", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const stateRoot = path.join(root, "state");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(workspace, "fixture.txt"), "budget fixture\n", "utf8");
+  const execution = spawnSync(
+    process.execPath,
+    [
+      RUNNER,
+      "start",
+      "--user-approved",
+      "--workspace",
+      workspace,
+      "--state-root",
+      stateRoot,
+      "--workspace-mode",
+      "live",
+      "--goal",
+      "Exercise the run token budget guard",
+      "--max-run-tokens",
+      "100",
+      "--timeout-minutes",
+      "1",
+      "--json",
+    ],
+    {
+      encoding: "utf8",
+      timeout: INTEGRATION_TIMEOUT,
+      env: {
+        ...process.env,
+        AEG_CODEX_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
+      },
+    },
+  );
+  assert.equal(execution.status, 0, execution.stderr || execution.stdout);
+  const summary = JSON.parse(execution.stdout.trim());
+  assert.equal(summary.status, "waiting_budget");
+  const run = JSON.parse(await readFile(path.join(summary.run_dir, "run.json"), "utf8"));
+  assert.equal(run.status, "waiting_budget");
+  assert.equal(run.nodes.planner.status, "waiting_budget");
+  assert.equal(run.budget.observed.reserved_tokens, 0);
+  assert.ok(run.budget.observed.token_overrun > 0);
+  const attempts = JSON.parse(await readFile(path.join(summary.run_dir, "nodes", "planner", "attempts.json"), "utf8"));
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].budget_exceeded, true);
+  assert.equal(attempts[0].retry_scheduled, undefined);
+  const runtimeState = JSON.parse(await readFile(path.join(summary.run_dir, "runtime-state.json"), "utf8"));
+  assert.equal(runtimeState.status, "waiting_budget");
+  const status = spawnSync(
+    process.execPath,
+    [RUNNER, "status", "--workspace", workspace, "--state-root", stateRoot, "--run", run.run_id, "--json"],
+    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+  );
+  assert.equal(status.status, 0, status.stderr || status.stdout);
+  const statusOutput = JSON.parse(status.stdout.trim());
+  assert.equal(statusOutput.status, "waiting_budget");
+  assert.equal(statusOutput.progress.status, "waiting_budget");
+  const watch = spawnSync(
+    process.execPath,
+    [RUNNER, "watch", "--workspace", workspace, "--state-root", stateRoot, "--run", run.run_id, "--once", "--json"],
+    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+  );
+  assert.equal(watch.status, 0, watch.stderr || watch.stdout);
+  const watchOutput = JSON.parse(watch.stdout.trim());
+  assert.equal(watchOutput.status, "waiting_budget");
+  assert.equal(watchOutput.progress.status, "waiting_budget");
+  const events = await readFile(path.join(summary.run_dir, "events", "events.jsonl"), "utf8");
+  assert.match(events, /RunBudgetReserved/);
+  assert.match(events, /RunBudgetReservationReleased/);
+  assert.match(await readFile(summary.report, "utf8"), /waiting_budget|token budget/i);
 });
 
 test("a read-only specialist retries one missing Skill application record and then completes", async (t) => {
@@ -6910,8 +7742,9 @@ test("stop interrupts a capacity wait, preserves evidence, and resumes the exact
   });
   await waitFor(async () => {
     const queue = await inspectModelQueue({ queueRoot, capacityConfig });
+    const identity = await realpath(workspace);
     return queue.waiting.some((request) => request.workspace_key === createHash("sha256").update(
-      process.platform === "win32" ? path.resolve(workspace).toLowerCase() : path.resolve(workspace),
+      process.platform === "win32" ? identity.toLowerCase() : identity,
     ).digest("hex"));
   }, { message: "workspace queue request" });
   const queuedStatus = spawnSync(
@@ -7027,7 +7860,7 @@ test("stop terminates an active model child even when the run lock is lost", asy
   await waitFor(async () => {
     const queue = await inspectModelQueue({ queueRoot });
     return queue.active.some((lease) => Number.isInteger(lease.child_pid) && lease.child_pid > 0);
-  }, { message: "active model child" });
+  }, { message: "active model child", timeout: ACTIVE_MODEL_START_TIMEOUT });
   await rm(path.join(selected.directory, ".lock"), { force: true });
 
   const stopped = spawnSync(
@@ -7091,7 +7924,7 @@ test("stop --force recovers an exact legacy runner that cannot acknowledge the s
     stdio: "ignore",
   });
   t.after(() => {
-    if (legacyRunner.exitCode === null) legacyRunner.kill();
+    if (legacyRunner.exitCode === null && legacyRunner.signalCode === null) legacyRunner.kill();
   });
   await writeFile(
     path.join(summary.run_dir, ".lock"),
@@ -7124,7 +7957,7 @@ test("stop --force recovers an exact legacy runner that cannot acknowledge the s
   );
   assert.equal(stopped.status, 0, stopped.stderr || stopped.stdout);
   assert.equal(JSON.parse(stopped.stdout.trim()).status, "interrupted");
-  await waitFor(() => legacyRunner.exitCode !== null, { message: "legacy runner termination" });
+  await waitFor(() => legacyRunner.exitCode !== null || legacyRunner.signalCode !== null, { message: "legacy runner termination" });
   assert.equal(JSON.parse(await readFile(runPath, "utf8")).blocker.type, "OWNER_STOPPED");
 });
 
@@ -7979,7 +8812,7 @@ test("worktree isolation freezes dirty input, exports results, rejects conflicts
     ],
     {
       encoding: "utf8",
-      timeout: INTEGRATION_TIMEOUT,
+      timeout: INTEGRATION_TIMEOUT * 2,
       env: {
         ...process.env,
         AEG_CODEX_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
@@ -8823,7 +9656,7 @@ test("global installer refuses an active runtime and installs a validated staged
   const blocked = spawnSync(
     process.execPath,
     [INSTALLER, "--codex-home", codexHome, "--bin-dir", binDir],
-    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+    { encoding: "utf8", timeout: SLOW_INTEGRATION_TIMEOUT },
   );
   assert.equal(blocked.status, 1);
   assert.match(blocked.stderr, /Refusing to update Graph.*run_lock/s);
@@ -8843,9 +9676,9 @@ test("global installer refuses an active runtime and installs a validated staged
   const installed = spawnSync(
     process.execPath,
     [INSTALLER, "--codex-home", codexHome, "--bin-dir", binDir],
-    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+    { encoding: "utf8", timeout: SLOW_INTEGRATION_TIMEOUT },
   );
-  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  assert.equal(installed.status, 0, spawnResultDetails(installed));
   const output = JSON.parse(installed.stdout.trim());
   assert.equal(output.status, "installed");
   assert.equal(output.skills.includes("autonomous-engineering-graph"), true);
@@ -9060,9 +9893,9 @@ test("global installer reclaims a lock whose live PID has no matching process id
   const installed = spawnSync(
     process.execPath,
     [INSTALLER, "--codex-home", codexHome, "--bin-dir", binDir],
-    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT },
+    { encoding: "utf8", timeout: SLOW_INTEGRATION_TIMEOUT },
   );
-  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  assert.equal(installed.status, 0, spawnResultDetails(installed));
   assert.equal(JSON.parse(installed.stdout.trim()).status, "installed");
 });
 
@@ -9188,7 +10021,7 @@ async function statOrNull(target) {
   }
 }
 
-test("preview reports the v3 contract without creating a Run or state residue", async (t) => {
+test("preview reports audit coverage and high assurance without creating a Run or state residue", async (t) => {
   const root = await temporaryDirectory(t);
   const workspace = path.join(root, "workspace");
   const stateRoot = path.join(root, "state");
@@ -9205,10 +10038,10 @@ test("preview reports the v3 contract without creating a Run or state residue", 
   assert.equal(output.creates_run, false);
   assert.equal(output.creates_workspace, false);
   assert.equal(output.creates_state, false);
-  assert.equal(output.plan.mode, "task");
+  assert.equal(output.plan.mode, "audit");
   // The empty preview workspace is tiny, so the unpinned review fan-out
   // auto-scales to the task floor and records the decision.
-  assert.equal(output.plan.review_limit_per_wave, 2);
+  assert.equal(output.plan.review_limit_per_wave, 4);
   assert.equal(output.plan.coverage.auto_review_scaling.applied, true);
   assert.ok(Array.isArray(output.plan.required_checks));
   assert.ok(Array.isArray(output.capabilities));
@@ -9216,7 +10049,7 @@ test("preview reports the v3 contract without creating a Run or state residue", 
   for (const entry of output.capabilities) {
     assert.ok(entry.installed && entry.invocable && entry["read-sandbox-verified"] && entry["write-sandbox-verified"]);
   }
-  assert.equal(output.assurance.level, "standard");
+  assert.equal(output.assurance.level, "high");
   assert.equal(output.budget.profile, "default");
   assert.equal(output.budget.max_tokens, 6_000_000);
   assert.ok(output.preflight.environment_keys.length > 0);
@@ -9230,6 +10063,37 @@ test("preview reports the v3 contract without creating a Run or state residue", 
   assert.equal(missingGoal.status, 1);
   assert.match(missingGoal.stderr, /preview requires --goal/);
   assert.equal(await statOrNull(stateRoot), null);
+});
+
+test("goal mode inference keeps ordinary implementation requests as task mode", () => {
+  assert.equal(inferGoalMode("Implement the queue retry behavior"), "task");
+  assert.equal(inferGoalMode("Review this one parser function"), "review");
+  assert.equal(inferGoalMode("Audit the complete repository for release readiness"), "audit");
+  assert.equal(inferGoalMode("审计整个仓库的发布准备情况"), "audit");
+});
+
+test("stream budget guard stops at the declared aggregate token ceiling", () => {
+  const guard = tokenBudgetGuard(100);
+  guard.consume(`${JSON.stringify({ type: "turn.completed", usage: { input_tokens: 70, output_tokens: 20 } })}\n`);
+  assert.equal(guard.exceeded, false);
+  guard.consume(`${JSON.stringify({ type: "turn.completed", usage: { input_tokens: 80, output_tokens: 30 } })}\n`);
+  assert.equal(guard.exceeded, true);
+  assert.equal(guard.observed_tokens, 110);
+});
+
+test("strict agent capability doctor blocks an installed but unverified backend", () => {
+  const matrix = {
+    backend: "codex",
+    installed: { status: "PASS", value: "codex" },
+    invocable: { status: "PASS", value: "codex 1.0.0" },
+    "read-sandbox-verified": { status: "WARN", value: "unverified" },
+    "write-sandbox-verified": { status: "WARN", value: "unverified" },
+    "automatic-fallback-ready": { status: "WARN", value: "not-ready" },
+  };
+  const doctor = agentCapabilityDoctor({ backend: "codex", matrix, strict: true, testFixtureOverride: false });
+  assert.equal(doctor.status, "blocked");
+  assert.ok(doctor.gaps.some((gap) => /read-sandbox-verified/.test(gap.check)));
+  assert.ok(doctor.gaps.some((gap) => /write-sandbox-verified/.test(gap.check)));
 });
 
 test("runs lists saved runs with recovery flags and usage", async (t) => {
@@ -9767,4 +10631,99 @@ test("the workspace file map is bounded and skips generated directories", async 
   const truncatedMap = await workspaceFileMap(capped);
   assert.equal(truncatedMap.truncated, true);
   assert.equal(truncatedMap.count, 200);
+});
+
+test("review dry-run records the module map and opt-in static Android preflight", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const stateRoot = path.join(root, "state");
+  await mkdir(path.join(workspace, "app", "src", "main"), { recursive: true });
+  await writeFile(path.join(workspace, "settings.gradle.kts"), 'include(":app", ":screenshot-demo")\n', "utf8");
+  await writeFile(path.join(workspace, "app", "build.gradle.kts"), 'plugins { id("com.android.application") }\n', "utf8");
+  await writeFile(path.join(workspace, "app", "src", "main", "AndroidManifest.xml"), "<manifest />\n", "utf8");
+  const execution = spawnSync(
+    process.execPath,
+    [
+      RUNNER,
+      "start",
+      "--user-approved",
+      "--workspace",
+      workspace,
+      "--state-root",
+      stateRoot,
+      "--workspace-mode",
+      "live",
+      "--mode",
+      "review",
+      "--machine-preflight",
+      "--dry-run",
+      "--goal",
+      "Review the Android module layout",
+      "--json",
+    ],
+    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT, env: { ...process.env, AEG_DISABLE_NOTIFICATIONS: "1" } },
+  );
+  assert.equal(execution.status, 0, execution.stderr || execution.stdout);
+  const summary = JSON.parse(execution.stdout.trim());
+  assert.equal(summary.status, "planned");
+  const run = JSON.parse(await readFile(path.join(summary.run_dir, "run.json"), "utf8"));
+  assert.equal(run.machine_preflight.readiness, "gaps");
+  assert.equal(run.machine_preflight.gradle_probe, "not_requested");
+  const map = JSON.parse(await readFile(path.join(summary.run_dir, "workspace-module-map.json"), "utf8"));
+  assert.ok(map.gradle.missing_modules.some((module) => module.project_path === ":screenshot-demo"));
+  const preflight = JSON.parse(await readFile(path.join(summary.run_dir, "machine-preflight.json"), "utf8"));
+  assert.equal(preflight.probe.status, "not_requested");
+  assert.ok(preflight.gaps.some((gap) => gap.kind === "gradle-module"));
+  assert.match(await readFile(summary.report, "utf8"), /Android\/Gradle Machine Preflight/);
+});
+
+test("opt-in Gradle machine preflight records wrapper command evidence", async (t) => {
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const stateRoot = path.join(root, "state");
+  await mkdir(path.join(workspace, "app", "src", "main"), { recursive: true });
+  await writeFile(path.join(workspace, "settings.gradle.kts"), 'include(":app")\n', "utf8");
+  await writeFile(path.join(workspace, "app", "build.gradle.kts"), 'plugins { id("com.android.application") }\n', "utf8");
+  await writeFile(path.join(workspace, "app", "src", "main", "AndroidManifest.xml"), "<manifest />\n", "utf8");
+  const wrapperName = process.platform === "win32" ? "gradlew.bat" : "gradlew";
+  const wrapperContents = process.platform === "win32"
+    ? "@echo off\r\nif \"%1\"==\"projects\" echo Root project 'fixture'\r\nexit /b 0\r\n"
+    : "#!/bin/sh\nif [ \"$1\" = \"projects\" ]; then echo \"Root project 'fixture'\"; fi\nexit 0\n";
+  await writeFile(path.join(workspace, wrapperName), wrapperContents, "utf8");
+  if (process.platform !== "win32") await chmod(path.join(workspace, wrapperName), 0o755);
+
+  const execution = spawnSync(
+    process.execPath,
+    [
+      RUNNER,
+      "start",
+      "--user-approved",
+      "--workspace",
+      workspace,
+      "--state-root",
+      stateRoot,
+      "--workspace-mode",
+      "live",
+      "--mode",
+      "review",
+      "--machine-preflight-gradle",
+      "--dry-run",
+      "--goal",
+      "Probe the Android module layout",
+      "--json",
+    ],
+    { encoding: "utf8", timeout: INTEGRATION_TIMEOUT, env: { ...process.env, AEG_DISABLE_NOTIFICATIONS: "1" } },
+  );
+  assert.equal(execution.status, 0, execution.stderr || execution.stdout);
+  const summary = JSON.parse(execution.stdout.trim());
+  const preflight = JSON.parse(await readFile(path.join(summary.run_dir, "machine-preflight.json"), "utf8"));
+  assert.equal(preflight.probe.status, "pass");
+  assert.equal(preflight.probe.command_count, 1);
+  assert.equal(preflight.probe.commands[0].kind, "projects");
+  assert.deepEqual(preflight.probe.commands[0].args, ["projects", "--no-daemon", "--console=plain"]);
+  assert.equal(preflight.probe.commands[0].cwd, await realpath(workspace));
+  assert.equal(preflight.probe.commands[0].exit_code, 0);
+  assert.match(preflight.probe.commands[0].command_line, /gradlew/);
+  assert.equal(preflight.probe.commands[0].surface_truncated, false);
+  assert.equal(summary.status, "planned");
 });

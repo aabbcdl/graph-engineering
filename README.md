@@ -87,6 +87,15 @@ Graph has no separate Python package, database, daemon, or model SDK to install.
 The model work is performed by the selected Codex or Claude CLI. package.json
 has no runtime dependencies; the installer and runner use Node's standard library.
 
+### Platform support status
+
+Graph Engineering is currently Mac-first. macOS, especially Apple Silicon, is
+the primary supported and documented workflow. Windows is only partially
+adapted at this stage: path handling, process isolation, and real-agent sandbox
+behavior may still be unreliable. Windows users should treat the status as
+experimental/`UNKNOWN`, run the protected smoke checks first, and not assume
+that a successful Mac run implies Windows readiness.
+
 ## Install on macOS
 
 ```bash
@@ -122,9 +131,10 @@ before it replaces the user-level Skills.
 
 ### Windows is not required for the Mac workflow
 
-The Windows smoke commands below document a separate compatibility gate. They
-are not prerequisites for Mac users and are not part of the current Mac release
-claim.
+The Windows smoke commands below document a separate, currently incomplete
+compatibility gate. Windows is not the primary target, is not required for Mac
+users, and is not part of the current Mac release claim. The package may install
+on Windows while a real-agent Run still fails or remains `waiting_environment`.
 
 On Windows, validate the selected backend's sandbox before the first real Run:
 
@@ -373,12 +383,12 @@ Use `codex.planner=<model>` or `claude.planner=<model>` when names differ by bac
 
 Do not claim that Graph finds or fixes more defects from one run. The paired harness freezes one fixture, gives independent copies to Graph and a single-agent baseline, enforces matching goal/model/effort/budget declarations, rejects budget overruns, and reports paired 95% intervals. At least five complete comparable pairs are required before any fixture-scoped performance statement is allowed.
 
-Windows compatibility remains an external gate. Until the protected Codex /
-Claude read-only and workspace-write smokes run on a real Windows host, the
-status is `UNKNOWN`/`waiting_environment`; Mac-side preparation is not Windows
-evidence. Likewise, no claim that Graph saves tokens or improves effectiveness
-is allowed until at least five complete paired evaluations bind the same
-fixture, goal, model, effort, and budget.
+Windows compatibility remains an external and currently incomplete gate. Until
+the protected Codex / Claude read-only and workspace-write smokes run on a real
+Windows host, the status is `UNKNOWN`/`waiting_environment`; Mac-side
+preparation is not Windows evidence. Likewise, no claim that Graph saves tokens
+or improves effectiveness is allowed until at least five complete paired
+evaluations bind the same fixture, goal, model, effort, and budget.
 
 See [docs/usage.md](docs/usage.md) and [docs/architecture.md](docs/architecture.md).
 The paired evaluation harness is maintained in the source checkout under
@@ -442,12 +452,14 @@ Each command creates one temporary Git repository, makes one small real model ca
 
 ## Status
 
-Version `0.3.1` is suitable for controlled local repository work. The source
+Version `0.3.1` is suitable for controlled local repository work on the
+Mac-first path. The source
 checkout also contains a separate paired-evaluation harness, but the npm
 artifact is only the installable control plane. Production automation still
 depends on the reliability and permissions of the configured agent CLIs and
 model services. The protected Windows real-agent workflow is manual/nightly
-only and is not part of ordinary pull-request model spend.
+only, currently not fully validated, and is not part of ordinary pull-request
+model spend.
 
 ## License
 

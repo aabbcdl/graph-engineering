@@ -2,10 +2,10 @@
 
 ## Current authoritative status (2026-08-30)
 
-- Mac Apple Silicon is the primary supported path; the deterministic CI matrix is Ubuntu + `macos-14`. Windows protected smoke remains outside the Mac release gate.
+- Mac Apple Silicon is the primary supported path; the deterministic CI matrix is Ubuntu + `macos-14`. Windows is currently only partially adapted and may be unreliable for real-agent work; protected smoke remains outside the Mac release gate.
 - Public NPM `0.3.1`, public GitHub `main`, tag `v0.3.1`, and GitHub Releases `v0.3.0`/`v0.3.1` are now present and traceable to the verified release commit.
 - The previous public CI run was red for two environment/entrypoint assumptions, not for Graph runtime behavior; both are now covered by deterministic fixes.
-- Windows protected real-agent smoke remains optional and external to the Mac workflow. Graph-vs-baseline effectiveness remains unclaimed until five comparable pairs exist.
+- Windows protected real-agent smoke remains optional, external, and `UNKNOWN` for the Mac workflow. Graph-vs-baseline effectiveness remains unclaimed until five comparable pairs exist.
 - Real-repository runs reported during development are not converted into release evidence unless their Run artifacts can be located and independently checked.
 
 ## 2026-08-30 public CI correction

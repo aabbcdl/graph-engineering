@@ -23,7 +23,7 @@ Mac-first cross-platform/release closeout: completed and externally verified; Wi
 - Public CI: [run 33307211330](https://github.com/aabbcdl/graph-engineering/actions/runs/33307211330), all four Ubuntu/macOS jobs passed.
 - NPM: `graph-engineering@0.3.1`, `latest=0.3.1`, 67 files, shasum `09e4b6ff80a89829a15c520e45b74d02652de704`.
 - GitHub: tag `v0.3.1` and [release](https://github.com/aabbcdl/graph-engineering/releases/tag/v0.3.1) published; [v0.3.0 release](https://github.com/aabbcdl/graph-engineering/releases/tag/v0.3.0) also backfilled for the existing public tag.
-- Remaining independent gates: Windows protected real-agent smoke is optional/`UNKNOWN`; five comparable real-model Graph-vs-baseline pairs and a unified archive of real-repository Run artifacts are still absent.
+- Remaining independent gates: Windows is only partially adapted and may be unreliable for real-agent work, so protected smoke remains optional/`UNKNOWN`; five comparable real-model Graph-vs-baseline pairs and a unified archive of real-repository Run artifacts are still absent.
 
 ## 2026-08-28 NPM package preparation
 

@@ -25,7 +25,7 @@
 
 - 本项目以 macOS Apple Silicon 为主验证目标；公开确定性 CI 覆盖 `ubuntu-latest` 与 `macos-14`，其中 `macos-14` 与本机验证属于 Mac 发布门禁。
 - `graph-engineering@0.3.1` 已通过 NPM 官方 registry 公开发布。本轮收口包含跨平台测试入口、CI 环境隔离和发布文档同步；发布前后的证据已记录在本节和 `findings.md`。
-- Windows protected real-agent smoke 仍是独立可选外部门，不是 Mac 用户的使用前置条件；Windows 不在本轮 Mac 发布 CI 矩阵内，没有真实 Windows 机器证据时继续标记为 `UNKNOWN`/`waiting_environment`。
+- Windows 目前只完成部分适配，路径、进程隔离和真实 Agent sandbox 仍可能不稳定；protected real-agent smoke 仍是独立可选外部门，不是 Mac 用户的使用前置条件。Windows 不在本轮 Mac 发布 CI 矩阵内，没有真实 Windows 机器证据时继续标记为 `UNKNOWN`/`waiting_environment`。
 - Graph 相对单 Agent 的效果仍不作结论；必须由同一 fixture、goal、model、effort、budget 的至少五组 paired evaluation 证明。
 - 用户此前运行真实仓库的口头结果不替代可复核 Run artifact；标准项目状态目录中未找到可统一归档的当前报告，因此本计划不把它写成发布证据。
 
@@ -127,8 +127,9 @@
   workspace 中执行 `projects` 和受限 task `--dry-run`，并记录命令、退出码、耗时
   与文件 surface 变化。工具链缺失属于 `waiting_environment`，未请求或未执行
   的 probe 不被记为命令失败。
-- **T-05 Windows smoke：保留为外部门禁，当前未宣称 ready。** Mac 端只准备
-  runner 和证据契约；没有真实 Windows protected smoke 时状态继续是
+- **T-05 Windows smoke：保留为外部门禁，当前明确标注为部分适配。** 路径、
+  进程隔离和真实 Agent sandbox 仍可能不稳定；Mac 端只准备 runner 和证据
+  契约。没有真实 Windows protected smoke 时状态继续是
   `UNKNOWN`/`waiting_environment`。五组 paired evaluation 也尚未满足，因此不
   声称 Graph 比单 Agent 更省 token 或更有效。
 

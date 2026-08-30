@@ -442,7 +442,7 @@ Each command creates one temporary Git repository, makes one small real model ca
 
 ## Status
 
-Version `0.3.0` is suitable for controlled local repository work. The source
+Version `0.3.1` is suitable for controlled local repository work. The source
 checkout also contains a separate paired-evaluation harness, but the npm
 artifact is only the installable control plane. Production automation still
 depends on the reliability and permissions of the configured agent CLIs and

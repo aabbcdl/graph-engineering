@@ -3292,8 +3292,8 @@ function pathIsInside(parent, candidate) {
   return relation === "" || (!relation.startsWith("..") && !path.isAbsolute(relation));
 }
 
-function findOnConfiguredPath(names, workspace) {
-  const directories = String(process.env.PATH || "")
+function findOnConfiguredPath(names, workspace, configuredPath = process.env.PATH) {
+  const directories = String(configuredPath || "")
     .split(path.delimiter)
     .map((entry) => entry.replace(/^"|"$/g, "").trim())
     .filter(Boolean);
@@ -3389,17 +3389,20 @@ function desktopCodexInvocations(workspace) {
 let cachedCodexInvocation = null;
 let cachedCodexInvocationKey = null;
 
-function resolveCodexInvocation(workspace = process.cwd()) {
-  if (process.env.AEG_CODEX_COMMAND_JSON) {
-    const parsed = JSON.parse(process.env.AEG_CODEX_COMMAND_JSON);
+function resolveCodexInvocation(workspace = process.cwd(), options = {}) {
+  const environment = options.environment || process.env;
+  const probe = options.probe;
+  const find = (names) => findOnConfiguredPath(names, workspace, environment.PATH || environment.Path);
+  if (environment.AEG_CODEX_COMMAND_JSON) {
+    const parsed = JSON.parse(environment.AEG_CODEX_COMMAND_JSON);
     if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("AEG_CODEX_COMMAND_JSON must be a non-empty JSON array");
     return { command: parsed[0], prefix: parsed.slice(1) };
   }
   if (process.platform === "win32") {
-    const cacheKey = `${process.env.PATH || process.env.Path || ""}\n${process.env.LOCALAPPDATA || ""}`;
+    const cacheKey = `${environment.PATH || environment.Path || ""}\n${environment.LOCALAPPDATA || ""}`;
     if (cachedCodexInvocation && cachedCodexInvocationKey === cacheKey) return cachedCodexInvocation;
     const candidates = [...desktopCodexInvocations(workspace)];
-    const commandShim = findOnConfiguredPath(["codex.cmd"], workspace);
+    const commandShim = find(["codex.cmd"]);
     if (commandShim) {
       const cliScript = path.join(path.dirname(commandShim), "node_modules", "@openai", "codex", "bin", "codex.js");
       if (existsSync(cliScript)) {
@@ -3407,20 +3410,20 @@ function resolveCodexInvocation(workspace = process.cwd()) {
         if (!pathIsInside(workspace, resolvedCli)) candidates.push({ command: process.execPath, prefix: [resolvedCli] });
       }
     }
-    const direct = findOnConfiguredPath(["codex.exe"], workspace);
+    const direct = find(["codex.exe"]);
     if (direct) candidates.push({ command: direct, prefix: [] });
-    const selected = newestWorkingCodexInvocation(candidates);
+    const selected = newestWorkingCodexInvocation(candidates, probe);
     if (selected) {
       cachedCodexInvocation = selected;
       cachedCodexInvocationKey = cacheKey;
       return selected;
     }
-    const script = findOnConfiguredPath(["codex.ps1"], workspace);
+    const script = find(["codex.ps1"]);
     if (!script) throw new Error("codex.ps1 was not found on PATH");
     const fallback = newestWorkingCodexInvocation([{
       command: windowsSystemExecutable("System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
       prefix: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script],
-    }]);
+    }], probe);
     if (!fallback) {
       throw new Error("No installed Codex CLI accepts Graph's required unattended invocation: --ask-for-approval never exec");
     }
@@ -3428,9 +3431,9 @@ function resolveCodexInvocation(workspace = process.cwd()) {
     cachedCodexInvocationKey = cacheKey;
     return fallback;
   }
-  const command = findOnConfiguredPath(["codex"], workspace);
+  const command = find(["codex"]);
   if (!command) throw new Error("codex was not found on PATH");
-  const selected = newestWorkingCodexInvocation([{ command, prefix: [] }]);
+  const selected = newestWorkingCodexInvocation([{ command, prefix: [] }], probe);
   if (!selected) {
     throw new Error("The installed Codex CLI does not accept Graph's required unattended invocation: --ask-for-approval never exec");
   }

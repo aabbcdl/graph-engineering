@@ -1,5 +1,20 @@
 # Progress log
 
+## Current authoritative status (2026-08-30)
+
+- Mac Apple Silicon is the primary supported path; the deterministic CI matrix is being extended with `macos-14`.
+- Public NPM `0.3.0` and public GitHub `main` are already present. This closeout prepares a traceable `0.3.1` patch for cross-platform test execution and CI reliability.
+- The previous public CI run was red for two environment/entrypoint assumptions, not for Graph runtime behavior; both are now covered by deterministic fixes.
+- Windows protected real-agent smoke remains optional and external to the Mac workflow. Graph-vs-baseline effectiveness remains unclaimed until five comparable pairs exist.
+- Real-repository runs reported during development are not converted into release evidence unless their Run artifacts can be located and independently checked.
+
+## 2026-08-30 closeout verification (local)
+
+- `npm test`: exit 0; 302 tests, 296 passed, 6 skipped, 0 failed.
+- `npm run test:eval`: 45/45; `npm run validate`: 72/72; `npm run validate:package`: 67 files, 17 shipped `.mjs`, 0 denied paths.
+- `npm run test:package-smoke` and `npm run release:check`: both pass; package smoke exercised the public NPM bin on `darwin-arm64`.
+- The only remaining release actions are external: push the verified commit, observe public CI, publish NPM `0.3.1`, and create/push tags and GitHub Releases. Windows real-agent smoke remains a separate optional environment gate.
+
 ## 2026-08-21
 
 ### Phase 1 - baseline and P1 correctness gates

@@ -4,7 +4,16 @@
 Implement the approved Graph Engineering hardening plan while preserving the existing dirty worktree, v1/v2 run readability, isolated execution, transactional apply, and explicit no-Graph-self-modification boundary.
 
 ## Current Phase
-Local deterministic closure complete; NPM `0.3.0` published, remote source sync remains separate (2026-08-28)
+Mac-first cross-platform/release closeout: NPM `0.3.1` source is being verified; Windows real-agent smoke remains optional (2026-08-30)
+
+## 2026-08-30 closeout scope
+
+- [x] Pin the published `0.3.0` source provenance to tag `v0.3.0` before new changes.
+- [x] Replace shell-dependent test globs with deterministic Node file enumeration.
+- [x] Make Codex path-resolution regression tests independent of an installed host Codex.
+- [x] Add `macos-14` to the deterministic CI matrix.
+- [ ] Complete local gates, publish `0.3.1`, push the release commit, and create `v0.3.1`/GitHub Release.
+- [ ] Record the exact commit, registry version, tarball identity, CI run, and remaining external gates.
 
 ## 2026-08-28 NPM package preparation
 
@@ -15,7 +24,7 @@ Local deterministic closure complete; NPM `0.3.0` published, remote source sync 
 - [x] Latest package evidence: 66 files / 17 shipped `.mjs`, `npm run validate:package` pass, `npm run test:package-smoke` pass, `npm run test:eval` 45/45, `npm run validate` 72/72, host `darwin-arm64`.
 - [x] Supply the real GitHub repository URL and remove public-doc placeholders before release; `npm run release:check` reports `ready`.
 - [x] Publish `graph-engineering@0.3.0` to the public NPM registry through the browser web-auth/2FA flow; registry verification reports `latest=0.3.0`.
-- [ ] Commit and push the local release-preparation changes to the public GitHub repository; this task intentionally did not perform that separate remote mutation.
+- [x] Commit and push the `0.3.0` release-preparation changes to the public GitHub repository; `main` was synced at `f716250`.
 
 ## 2026-08-26 repository health closure
 

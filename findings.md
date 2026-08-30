@@ -1,5 +1,13 @@
 # Findings and decisions
 
+## Current authoritative state (2026-08-30)
+
+- `main` was previously synchronized to public GitHub at `f716250`; the published NPM baseline is `graph-engineering@0.3.0`.
+- The current closeout changes only repository test orchestration, deterministic Codex resolver coverage, CI matrix coverage, and release/documentation metadata. It does not change user repositories or claim a new model-quality result.
+- Mac Apple Silicon is the primary supported workflow. Windows real-agent smoke remains an optional external gate and is not required for Mac use.
+- Local verification is complete for `0.3.1`: `npm test` 302/302 (296 pass, 6 skipped), eval 45/45, specialist validation 72/72, package validation 67 files / 17 shipped `.mjs`, package smoke pass, and release-check ready. The exact commit, tarball, registry, CI, and GitHub Release evidence will be added after external release actions.
+- No current unified archive of the user's real-repository Run reports was found in the standard project state locations, so those runs remain useful operational feedback but not published statistical evidence.
+
 ## Repository evidence baseline (historical; rechecked below)
 
 - Main runner: `skills/autonomous-engineering-graph/scripts/graph-runner.mjs` (still the orchestration monolith; `runtime/` extraction is the next structural step).

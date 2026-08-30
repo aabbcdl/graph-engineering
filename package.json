@@ -1,6 +1,6 @@
 {
   "name": "graph-engineering",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A durable, evidence-driven multi-agent engineering graph for repository audit and repair.",
   "type": "module",
   "license": "Apache-2.0",
@@ -13,8 +13,8 @@
     "graph-engineering-install": "scripts/install.mjs"
   },
   "scripts": {
-    "test": "node --test skills/autonomous-engineering-graph/scripts/tests/*.test.mjs",
-    "test:eval": "node --test evals/tests/*.test.mjs",
+    "test": "node scripts/run-tests.mjs skills/autonomous-engineering-graph/scripts/tests",
+    "test:eval": "node scripts/run-tests.mjs evals/tests",
     "test:windows-write-smoke": "node scripts/windows-codex-write-smoke.mjs",
     "test:windows-codex-write-smoke": "node scripts/windows-codex-write-smoke.mjs --backend codex",
     "test:windows-codex-readonly-smoke": "node scripts/windows-codex-readonly-smoke.mjs",
@@ -40,6 +40,7 @@
     "skills/autonomous-engineering-graph/scripts/runtime",
     "skills/autonomous-engineering-graph/scripts/schemas",
     "docs",
+    "CHANGELOG.md",
     "scripts/install.mjs",
     "README.md",
     "CONTRIBUTING.md",

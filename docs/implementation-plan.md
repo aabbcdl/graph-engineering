@@ -21,6 +21,23 @@
 
 这样选择的直接收益是：服务中断可以从检查点恢复；晚到的失败不会抹掉已交付结果；报告可以诚实区分“完成”“部分完成”“等待外部条件”和“失败”。
 
+## 当前权威状态（2026-08-30）
+
+- 本项目以 macOS Apple Silicon 为主验证目标；`macos-14` 确定性 CI 与本机验证属于 Mac 发布门禁。
+- `graph-engineering@0.3.0` 已是公开 NPM 版本。本轮 `0.3.1` 收口包含跨平台测试入口、CI 环境隔离和发布文档同步，只有在本地门禁通过后才发布。
+- Windows protected real-agent smoke 仍是可选外部门，不是 Mac 用户的使用前置条件；没有真实 Windows 机器证据时继续标记为 `UNKNOWN`/`waiting_environment`。
+- Graph 相对单 Agent 的效果仍不作结论；必须由同一 fixture、goal、model、effort、budget 的至少五组 paired evaluation 证明。
+- 用户此前运行真实仓库的口头结果不替代可复核 Run artifact；标准项目状态目录中未找到可统一归档的当前报告，因此本计划不把它写成发布证据。
+
+本节覆盖旧阶段记录中的“未发布”“未同步”“CI 未观察”等历史状态；旧日期下的结果保留作为审计轨迹，不再作为当前结论。
+
+### 本轮收口验证（本机；2026-08-30）
+
+- `npm test`：exit 0，302 个测试，296 pass、6 skipped、0 fail；Shell glob 不再参与测试文件发现。
+- `npm run test:eval`：exit 0，45/45；`npm run validate`：72/72；`npm run validate:package`：67 个文件、17 个发布 `.mjs`、0 个 denied path。
+- `npm run test:package-smoke`：exit 0；通过 NPM bin 验证 install、help、audit preview、doctor 和 package validate；`npm run release:check`：`ready`。
+- 本轮变更未修改用户仓库、未运行真实模型、未提交 Graph 自身运行结果，也没有把 Windows real-agent smoke 或 Graph-vs-baseline 效果写成已证明结论。
+
 ## 阶段计划与状态
 
 ### Phase 0：基线和契约
@@ -75,7 +92,7 @@
 
 验收：评测脚本、恢复测试和文档审查全部通过后，才做性能结论；单次真实项目运行不能被描述为统计证明。
 
-## 当前已完成（本地控制面）
+## 当前已完成（本地控制面；历史收口记录）
 
 - runtime 状态、事件、artifact、证据验证模块已加入。
 - runner 已写入节点生命周期事件、planner 生命周期事件、结果 artifact 和工作项交付章节。
@@ -83,11 +100,10 @@
 - watcher 已显示工作项计数、队列、健康状态和阻塞建议。
 - `graph-engineering events` 已提供无模型、只读的事件流读取入口。
 - `preview`、`diff`、`apply`（含 `--dry-run` 与选择性 `--file`）、`recheck`、`runs`、`gc` 六个控制面操作已实现并有 CLI 契约测试覆盖（只读性、无状态残留、变更分类、冲突检查、部分应用记录、recheck 守卫与 `already-satisfied` 快路径）。
-- 15 项控制面改进及后续产品契约修复已落地；本轮发布准备已通过 `npm run test:eval`（45/45）、`npm run validate`（72 项检查）、`npm run validate:package`（66 个文件 / 17 个发布 `.mjs`）和 `npm run test:package-smoke`。
-- npm 包边界已通过 tarball 检查：66 个文件、18 个 references、8 个 agents，且不包含 `evals/`、隐藏测试或仓库专用 smoke 工具；`npm pack --dry-run` 同样确认包含新的 runtime module map 和 marketing kit。安装后的显式 Skill installer、`help`、audit `preview`、fail-closed `doctor` 和 package `validate` 已由 public-bin smoke 覆盖；即使用户 `CODEX_HOME` 为空，运行器也会发现包内七个可供规划的 specialist。
-- `graph-engineering@0.3.0` 已通过 NPM 官方 registry 发布并验证为 `latest`；发布使用浏览器 web-auth/2FA，包的 GitHub repository 元数据指向公开仓库 `https://github.com/aabbcdl/graph-engineering`。
-- 本次发布没有代替用户执行 Git commit/push；本地发布准备改动与公开 GitHub `main` 的源代码同步仍是独立尾巴。
-- 本机完整 Graph runner 集成测试在当前环境的 fixture-only 重跑为 272 项：262 pass、6 skipped、4 项仍返回失败（涉及既有 release-only/broad-audit/StorePulse 与 test-fixture capability 断言）；这些失败发生在未修改的 `graph-runner.mjs` 集成面，未被本次 NPM 包级发布门禁掩盖；后续发布更高版本前仍应单独处理或明确豁免。
+- 15 项控制面改进及后续产品契约修复已落地；发布准备由 `npm run test:eval`、`npm run validate`、`npm run validate:package`、`npm run test:package-smoke` 和 `npm run release:check` 共同门禁，当前版本的精确结果记录在最新收口章节。
+- npm 包边界已通过 tarball 检查：本轮 `0.3.1` 为 67 个文件、18 个 references、8 个 agents，且不包含 `evals/`、隐藏测试或仓库专用 smoke 工具；`npm pack --dry-run` 同样确认包含新的 runtime module map 和 marketing kit。安装后的显式 Skill installer、`help`、audit `preview`、fail-closed `doctor` 和 package `validate` 已由 public-bin smoke 覆盖；即使用户 `CODEX_HOME` 为空，运行器也会发现包内七个可供规划的 specialist。
+- `graph-engineering@0.3.0` 已通过 NPM 官方 registry 发布并验证为 `latest`；公开 GitHub `main` 与源代码同步已完成。后续 patch release 必须绑定明确提交、tag 和 tarball 校验。
+- 之前记录的旧测试数字属于对应日期的历史证据；不能覆盖本轮跨平台修复后的新验证结果。
 - 本计划、设计说明、架构说明和使用说明已同步描述同一状态语义。
 
 ## 大型仓库优化计划（复审版）实施状态
@@ -118,15 +134,15 @@
 submodule separate 聚合和自动快照瘦身仍是后续设计/实验任务，未进入本轮公共
 接口或默认行为。
 
-## 当前未闭合的验收门
+## 当前仍需区分的验收门
 
-- 真实 Agent 能力：当前 Windows `doctor --agent-backend codex --json` 仍为 exit 2，read-only 与 workspace-write smoke 记录缺失；因此不能声称 `task-ready`。必须在受保护 runner 上运行真实 Codex/Claude smoke，并保留当前 runner、binary 和 sandbox 绑定的机器证据。
+- 真实 Agent 能力：Mac 真实仓库运行可作为使用反馈，但仓库中没有统一、可复核的当前 Run artifact；因此不把它升级为通用 `task-ready` 或发布统计证据。Windows protected smoke 仍是独立可选门。
 - Graph 实际效果：`npm run test:eval` 只证明 harness contract。当前没有满足 Run v3 绑定的五组 comparable real-model pairs，既有记录保持 `claim_ready=false`；因此不能声称 Graph 比 baseline 更有效或更省 token。
-- 发布状态：当前 checkout 为 dirty、未生成经 CI 验证的 release commit/artifact，远程 CI 和发布回滚信号未在本轮观察；因此本项目状态是“本地控制面可用”，不是“可发布”。
+- 发布状态：本轮需要在 CI、tarball、NPM registry、Git tag 和 GitHub Release 全部指向同一提交后，才可标记为 `verified-current`。
 
-## 明确不在本次自动化范围内
+## 本轮边界
 
-- 不自动提交、推送、部署、发布或执行不可逆数据操作。
+- 本轮允许提交、推送和发布 `0.3.1`，但不修改用户的其他项目、不部署服务，也不执行不可逆数据操作。
 - 不把 partial 结果自动合并回源工作区。
 - 不用模型轮询替代确定性 watcher。
 - 不用新的 Graph 运行来修改 Graph 自身，避免递归和资源互相占用。
@@ -146,4 +162,4 @@ submodule separate 聚合和自动快照瘦身仍是后续设计/实验任务，
 
 - 真实 Agent smoke 通过并使 `doctor` 返回 `ready`；
 - 至少五组完整、绑定同一 fixture/goal/model/effort/budget 的 comparable pairs，且 scorer 返回 `claim_ready=true`；
-- 对明确 release commit 观察到远程 CI、artifact identity、回滚路径和故障信号。
+- 对明确 release commit 观察到远程 CI、artifact identity、tag、GitHub Release 和可说明的回滚路径；Windows real-agent smoke 不属于 Mac 发布前置条件。

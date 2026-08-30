@@ -1749,6 +1749,7 @@ test("a release-only gap keeps isolated results applicable while marking the run
       env: {
         ...process.env,
         AEG_CODEX_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
+        AEG_CLAUDE_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
         AEG_FAKE_SCENARIO: "release-only-gap",
       },
     },
@@ -4387,20 +4388,27 @@ test("internal Git ignores ambient repository and index redirects", async (t) =>
 });
 
 test("Codex resolution ignores workspace-local command shims", async (t) => {
-  const workspace = await temporaryDirectory(t);
-  await writeFile(path.join(workspace, "codex.cmd"), "@echo unsafe\n", "utf8");
-  await writeFile(path.join(workspace, "codex.ps1"), "Write-Output unsafe\n", "utf8");
-  const previous = process.env.AEG_CODEX_COMMAND_JSON;
-  delete process.env.AEG_CODEX_COMMAND_JSON;
-  try {
-    const invocation = resolveCodexInvocation(workspace);
-    const candidates = [invocation.command, ...invocation.prefix].filter((value) => path.isAbsolute(value));
-    for (const candidate of candidates) {
-      const relation = path.relative(workspace, candidate);
-      assert.ok(relation.startsWith("..") || path.isAbsolute(relation));
-    }
-  } finally {
-    if (previous !== undefined) process.env.AEG_CODEX_COMMAND_JSON = previous;
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, "workspace");
+  const hostBin = path.join(root, "host-bin");
+  await mkdir(workspace, { recursive: true });
+  await mkdir(hostBin, { recursive: true });
+  for (const name of ["codex", "codex.cmd", "codex.exe", "codex.ps1"]) {
+    await writeFile(path.join(workspace, name), "workspace-local shim\n", "utf8");
+    await writeFile(path.join(hostBin, name), "host Codex fixture\n", "utf8");
+  }
+  const configuredPath = [workspace, hostBin].join(path.delimiter);
+  const invocation = resolveCodexInvocation(workspace, {
+    environment: { PATH: configuredPath, Path: configuredPath },
+    probe: (_candidate, args) => args.includes("--version")
+      ? { status: 0, stdout: "codex-cli 0.147.0", stderr: "" }
+      : { status: 0, stdout: "", stderr: "" },
+  });
+  const candidates = [invocation.command, ...invocation.prefix].filter((value) => path.isAbsolute(value));
+  assert.ok(candidates.length > 0);
+  for (const candidate of candidates) {
+    const relation = path.relative(workspace, candidate);
+    assert.ok(relation.startsWith("..") || path.isAbsolute(relation));
   }
 });
 
@@ -8119,6 +8127,7 @@ test("broad audit routes through the installed graph specialist pack", async (t)
       env: {
         ...process.env,
         AEG_CODEX_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
+        AEG_CLAUDE_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
         AEG_FAKE_SCENARIO: "specialist-routing",
       },
     },
@@ -8512,6 +8521,7 @@ test("a StorePulse-shaped high-risk audit plan completes without a false owner g
       env: {
         ...process.env,
         AEG_CODEX_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
+        AEG_CLAUDE_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
         AEG_FAKE_SCENARIO: "storepulse-plan",
       },
     },

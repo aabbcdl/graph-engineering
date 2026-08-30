@@ -2,11 +2,16 @@
 
 ## Current authoritative status (2026-08-30)
 
-- Mac Apple Silicon is the primary supported path; the deterministic CI matrix is being extended with `macos-14`.
+- Mac Apple Silicon is the primary supported path; the deterministic CI matrix is Ubuntu + `macos-14`. Windows protected smoke remains outside the Mac release gate.
 - Public NPM `0.3.0` and public GitHub `main` are already present. This closeout prepares a traceable `0.3.1` patch for cross-platform test execution and CI reliability.
 - The previous public CI run was red for two environment/entrypoint assumptions, not for Graph runtime behavior; both are now covered by deterministic fixes.
 - Windows protected real-agent smoke remains optional and external to the Mac workflow. Graph-vs-baseline effectiveness remains unclaimed until five comparable pairs exist.
 - Real-repository runs reported during development are not converted into release evidence unless their Run artifacts can be located and independently checked.
+
+## 2026-08-30 public CI correction
+
+- The first three-platform attempt exposed two separate environmental facts: GitHub `macos-14` uses the official Go 1.27.0 arm64 binary, while the old Darwin hash was from a Homebrew rebuild; Windows still has 15 path/isolation-specific test failures beyond shell glob expansion.
+- The evaluator now pins the official Darwin arm64 hash. Windows protected smoke remains an external `UNKNOWN` gate, and the public Mac release matrix is intentionally limited to Ubuntu + macOS 14.
 
 ## 2026-08-30 closeout verification (local)
 

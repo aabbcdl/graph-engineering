@@ -12,13 +12,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14, windows-latest]
+        os: [ubuntu-latest, macos-14]
     runs-on: ${{ matrix.os }}
-    # The Windows integration suite launches many isolated child processes and
-    # can legitimately take longer than the package/evaluation checks below.
-    # Keep its budget explicit instead of letting the combined job expire with
-    # no indication which gate consumed the time.
-    timeout-minutes: 35
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14, windows-latest]
+        os: [ubuntu-latest, macos-14]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:

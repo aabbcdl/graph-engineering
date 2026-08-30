@@ -50,7 +50,7 @@ test("jobqueue evaluator binds the official binary for each CI platform", () => 
     ecosystem: "go",
     version: "go1.27.0",
     platform: "darwin-arm64",
-    binary_sha256: "71c4991041d8e44975c882e4f72005719c958013d3340dc665a3808b72ddf702",
+    binary_sha256: "a19a71df81715c12d9a7e81bab036c12696fec1ddbd4258b48a2131a9080b267",
   });
 });
 
@@ -224,7 +224,7 @@ test("jobqueue pilot binds the frozen truth file before any arm run", async () =
       binary_sha256: "1db869c560a193573a71be466a34e0d4abb7792d78165c6102cdda069276a3a8",
     },
     "darwin-arm64": {
-      binary_sha256: "71c4991041d8e44975c882e4f72005719c958013d3340dc665a3808b72ddf702",
+      binary_sha256: "a19a71df81715c12d9a7e81bab036c12696fec1ddbd4258b48a2131a9080b267",
     },
   });
 });

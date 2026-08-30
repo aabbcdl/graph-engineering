@@ -23,9 +23,9 @@
 
 ## 当前权威状态（2026-08-30）
 
-- 本项目以 macOS Apple Silicon 为主验证目标；`macos-14` 确定性 CI 与本机验证属于 Mac 发布门禁。
+- 本项目以 macOS Apple Silicon 为主验证目标；公开确定性 CI 覆盖 `ubuntu-latest` 与 `macos-14`，其中 `macos-14` 与本机验证属于 Mac 发布门禁。
 - `graph-engineering@0.3.0` 已是公开 NPM 版本。本轮 `0.3.1` 收口包含跨平台测试入口、CI 环境隔离和发布文档同步，只有在本地门禁通过后才发布。
-- Windows protected real-agent smoke 仍是可选外部门，不是 Mac 用户的使用前置条件；没有真实 Windows 机器证据时继续标记为 `UNKNOWN`/`waiting_environment`。
+- Windows protected real-agent smoke 仍是独立可选外部门，不是 Mac 用户的使用前置条件；Windows 不在本轮 Mac 发布 CI 矩阵内，没有真实 Windows 机器证据时继续标记为 `UNKNOWN`/`waiting_environment`。
 - Graph 相对单 Agent 的效果仍不作结论；必须由同一 fixture、goal、model、effort、budget 的至少五组 paired evaluation 证明。
 - 用户此前运行真实仓库的口头结果不替代可复核 Run artifact；标准项目状态目录中未找到可统一归档的当前报告，因此本计划不把它写成发布证据。
 

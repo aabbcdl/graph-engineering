@@ -12,6 +12,8 @@ Mac-first cross-platform/release closeout: NPM `0.3.1` source is being verified;
 - [x] Replace shell-dependent test globs with deterministic Node file enumeration.
 - [x] Make Codex path-resolution regression tests independent of an installed host Codex.
 - [x] Add `macos-14` to the deterministic CI matrix.
+- [x] Bind the Darwin arm64 evaluator hash to the official `actions/setup-go` binary rather than a Homebrew rebuild.
+- [x] Keep Windows protected smoke outside the Mac release CI matrix; retain it as an explicitly unknown external gate.
 - [ ] Complete local gates, publish `0.3.1`, push the release commit, and create `v0.3.1`/GitHub Release.
 - [ ] Record the exact commit, registry version, tarball identity, CI run, and remaining external gates.
 

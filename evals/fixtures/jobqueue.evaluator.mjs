@@ -15,7 +15,10 @@ const GO_TOOLCHAIN_CONTRACT = Object.freeze({
   binary_sha256_by_platform: Object.freeze({
     "win32-x64": "7d828191ba32519a9c9361789ab647486236ed45c660889196c7770a8ff1985c",
     "linux-x64": "1db869c560a193573a71be466a34e0d4abb7792d78165c6102cdda069276a3a8",
-    "darwin-arm64": "71c4991041d8e44975c882e4f72005719c958013d3340dc665a3808b72ddf702",
+    // Pin the official Go distribution used by actions/setup-go. Homebrew's
+    // locally rebuilt binary has the same version but a different hash and is
+    // intentionally not interchangeable with this evaluation toolchain.
+    "darwin-arm64": "a19a71df81715c12d9a7e81bab036c12696fec1ddbd4258b48a2131a9080b267",
   }),
 });
 const GO_COMMAND_TIMEOUT_MS = 60_000;

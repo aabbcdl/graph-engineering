@@ -24,7 +24,7 @@
 ## 当前权威状态（2026-08-30）
 
 - 本项目以 macOS Apple Silicon 为主验证目标；公开确定性 CI 覆盖 `ubuntu-latest` 与 `macos-14`，其中 `macos-14` 与本机验证属于 Mac 发布门禁。
-- `graph-engineering@0.3.0` 已是公开 NPM 版本。本轮 `0.3.1` 收口包含跨平台测试入口、CI 环境隔离和发布文档同步，只有在本地门禁通过后才发布。
+- `graph-engineering@0.3.1` 已通过 NPM 官方 registry 公开发布。本轮收口包含跨平台测试入口、CI 环境隔离和发布文档同步；发布前后的证据已记录在本节和 `findings.md`。
 - Windows protected real-agent smoke 仍是独立可选外部门，不是 Mac 用户的使用前置条件；Windows 不在本轮 Mac 发布 CI 矩阵内，没有真实 Windows 机器证据时继续标记为 `UNKNOWN`/`waiting_environment`。
 - Graph 相对单 Agent 的效果仍不作结论；必须由同一 fixture、goal、model、effort、budget 的至少五组 paired evaluation 证明。
 - 用户此前运行真实仓库的口头结果不替代可复核 Run artifact；标准项目状态目录中未找到可统一归档的当前报告，因此本计划不把它写成发布证据。
@@ -37,6 +37,7 @@
 - `npm run test:eval`：exit 0，45/45；`npm run validate`：72/72；`npm run validate:package`：67 个文件、17 个发布 `.mjs`、0 个 denied path。
 - `npm run test:package-smoke`：exit 0；通过 NPM bin 验证 install、help、audit preview、doctor 和 package validate；`npm run release:check`：`ready`。
 - 本轮变更未修改用户仓库、未运行真实模型、未提交 Graph 自身运行结果，也没有把 Windows real-agent smoke 或 Graph-vs-baseline 效果写成已证明结论。
+- 发布证据：release commit 为 `1341b790a7d4c705f5cb1cfdcc066ac1d22ce078`；[GitHub CI run 33307211330](https://github.com/aabbcdl/graph-engineering/actions/runs/33307211330) 的 Ubuntu/macOS 四个 job 全部通过；NPM `0.3.1` 为 `latest`，tarball 为 67 个文件，shasum 为 `09e4b6ff80a89829a15c520e45b74d02652de704`；[v0.3.1 GitHub Release](https://github.com/aabbcdl/graph-engineering/releases/tag/v0.3.1) 已发布。
 
 ## 阶段计划与状态
 
@@ -138,7 +139,7 @@ submodule separate 聚合和自动快照瘦身仍是后续设计/实验任务，
 
 - 真实 Agent 能力：Mac 真实仓库运行可作为使用反馈，但仓库中没有统一、可复核的当前 Run artifact；因此不把它升级为通用 `task-ready` 或发布统计证据。Windows protected smoke 仍是独立可选门。
 - Graph 实际效果：`npm run test:eval` 只证明 harness contract。当前没有满足 Run v3 绑定的五组 comparable real-model pairs，既有记录保持 `claim_ready=false`；因此不能声称 Graph 比 baseline 更有效或更省 token。
-- 发布状态：本轮需要在 CI、tarball、NPM registry、Git tag 和 GitHub Release 全部指向同一提交后，才可标记为 `verified-current`。
+- 发布状态：CI、tarball、NPM registry、Git tag 和 GitHub Release 已完成核对；`0.3.1` 在上述 release commit 上标记为 `verified-current`。
 
 ## 本轮边界
 
@@ -162,4 +163,4 @@ submodule separate 聚合和自动快照瘦身仍是后续设计/实验任务，
 
 - 真实 Agent smoke 通过并使 `doctor` 返回 `ready`；
 - 至少五组完整、绑定同一 fixture/goal/model/effort/budget 的 comparable pairs，且 scorer 返回 `claim_ready=true`；
-- 对明确 release commit 观察到远程 CI、artifact identity、tag、GitHub Release 和可说明的回滚路径；Windows real-agent smoke 不属于 Mac 发布前置条件。
+- 本轮已对明确 release commit 观察到远程 CI、artifact identity、tag、GitHub Release 和可说明的回滚路径；Windows real-agent smoke 不属于 Mac 发布前置条件。

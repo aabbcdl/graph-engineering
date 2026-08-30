@@ -4,7 +4,7 @@
 Implement the approved Graph Engineering hardening plan while preserving the existing dirty worktree, v1/v2 run readability, isolated execution, transactional apply, and explicit no-Graph-self-modification boundary.
 
 ## Current Phase
-Mac-first cross-platform/release closeout: NPM `0.3.1` source is being verified; Windows real-agent smoke remains optional (2026-08-30)
+Mac-first cross-platform/release closeout: completed and externally verified; Windows real-agent smoke remains optional (2026-08-30)
 
 ## 2026-08-30 closeout scope
 
@@ -14,8 +14,16 @@ Mac-first cross-platform/release closeout: NPM `0.3.1` source is being verified;
 - [x] Add `macos-14` to the deterministic CI matrix.
 - [x] Bind the Darwin arm64 evaluator hash to the official `actions/setup-go` binary rather than a Homebrew rebuild.
 - [x] Keep Windows protected smoke outside the Mac release CI matrix; retain it as an explicitly unknown external gate.
-- [ ] Complete local gates, publish `0.3.1`, push the release commit, and create `v0.3.1`/GitHub Release.
-- [ ] Record the exact commit, registry version, tarball identity, CI run, and remaining external gates.
+- [x] Complete local gates, publish `0.3.1`, push the release commit, and create `v0.3.1`/GitHub Release.
+- [x] Record the exact commit, registry version, tarball identity, CI run, and remaining external gates.
+
+### 2026-08-30 release evidence
+
+- Release commit: `1341b790a7d4c705f5cb1cfdcc066ac1d22ce078` (`ci: make the Mac evaluation gate reproducible`).
+- Public CI: [run 33307211330](https://github.com/aabbcdl/graph-engineering/actions/runs/33307211330), all four Ubuntu/macOS jobs passed.
+- NPM: `graph-engineering@0.3.1`, `latest=0.3.1`, 67 files, shasum `09e4b6ff80a89829a15c520e45b74d02652de704`.
+- GitHub: tag `v0.3.1` and [release](https://github.com/aabbcdl/graph-engineering/releases/tag/v0.3.1) published; [v0.3.0 release](https://github.com/aabbcdl/graph-engineering/releases/tag/v0.3.0) also backfilled for the existing public tag.
+- Remaining independent gates: Windows protected real-agent smoke is optional/`UNKNOWN`; five comparable real-model Graph-vs-baseline pairs and a unified archive of real-repository Run artifacts are still absent.
 
 ## 2026-08-28 NPM package preparation
 

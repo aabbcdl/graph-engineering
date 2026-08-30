@@ -181,6 +181,6 @@ README 和录屏负责让人理解，Run 报告负责让人相信，paired evalu
 
 - GitHub 仓库 URL 已确定，README 和公开文档中不再保留仓库地址占位符；
 - Mac 安装、Codex/Claude backend doctor 和真实小仓库 Run 有机器证据；
-- NPM `graph-engineering@0.3.1` 发布候选已通过包内容检查，具备明确版本和显式 Skill 安装命令；公开发布仍以同一提交的 CI、registry、tag 和 Release 证据为准；
+- NPM `graph-engineering@0.3.1` 已公开发布，包内容检查通过，具备明确版本和显式 Skill 安装命令；公开仓库、CI、registry、tag 和 Release 证据已完成对齐；
 - 真实 Agent smoke、paired evaluation 和产品效果结论分开报告；
 - 所有截图、录屏、报告和文案都移除私有路径、凭据、token 与用户源码。

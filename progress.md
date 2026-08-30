@@ -3,7 +3,7 @@
 ## Current authoritative status (2026-08-30)
 
 - Mac Apple Silicon is the primary supported path; the deterministic CI matrix is Ubuntu + `macos-14`. Windows protected smoke remains outside the Mac release gate.
-- Public NPM `0.3.0` and public GitHub `main` are already present. This closeout prepares a traceable `0.3.1` patch for cross-platform test execution and CI reliability.
+- Public NPM `0.3.1`, public GitHub `main`, tag `v0.3.1`, and GitHub Releases `v0.3.0`/`v0.3.1` are now present and traceable to the verified release commit.
 - The previous public CI run was red for two environment/entrypoint assumptions, not for Graph runtime behavior; both are now covered by deterministic fixes.
 - Windows protected real-agent smoke remains optional and external to the Mac workflow. Graph-vs-baseline effectiveness remains unclaimed until five comparable pairs exist.
 - Real-repository runs reported during development are not converted into release evidence unless their Run artifacts can be located and independently checked.
@@ -18,7 +18,7 @@
 - `npm test`: exit 0; 302 tests, 296 passed, 6 skipped, 0 failed.
 - `npm run test:eval`: 45/45; `npm run validate`: 72/72; `npm run validate:package`: 67 files, 17 shipped `.mjs`, 0 denied paths.
 - `npm run test:package-smoke` and `npm run release:check`: both pass; package smoke exercised the public NPM bin on `darwin-arm64`.
-- The only remaining release actions are external: push the verified commit, observe public CI, publish NPM `0.3.1`, and create/push tags and GitHub Releases. Windows real-agent smoke remains a separate optional environment gate.
+- Release evidence is complete: commit `1341b790a7d4c705f5cb1cfdcc066ac1d22ce078`, CI run `33307211330` passed all four Ubuntu/macOS jobs, NPM `0.3.1` is `latest`, and the `v0.3.1` tag/Release are published. Windows real-agent smoke remains a separate optional environment gate.
 
 ## 2026-08-21
 

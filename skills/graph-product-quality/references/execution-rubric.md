@@ -83,7 +83,7 @@ If fields are missing:
 
 ## Workflow Integration
 
-Read `生命周期扩展/统一工作流契约.md`. Preserve Product-specific decision and measurement fields, and append canonical task status, checkpoint, validation, rollback, and next-stage routing for the workflow controller.
+Read `../../autonomous-engineering-graph/references/lifecycle-contract.md`. Preserve Product-specific decision and measurement fields, and append canonical task status, checkpoint, validation, rollback, and next-stage routing for the workflow controller.
 
 ---
 
@@ -1017,7 +1017,7 @@ Explain why.
 
 ## Workflow Artifact
 
-Append the canonical fields from `生命周期扩展/统一工作流契约.md`:
+Append the canonical fields from `../../autonomous-engineering-graph/references/lifecycle-contract.md`:
 
 - `artifact_id`, `type`, `source_stage`, and `source_version`
 - Per-task owner, mode, and status, including `PLAN_CORRECTED` and blockers

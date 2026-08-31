@@ -21,22 +21,28 @@
 
 这样选择的直接收益是：服务中断可以从检查点恢复；晚到的失败不会抹掉已交付结果；报告可以诚实区分“完成”“部分完成”“等待外部条件”和“失败”。
 
-## 当前权威状态（2026-08-30）
+## 当前权威状态（2026-08-31）
 
+- 已发布基线：`graph-engineering@0.3.1` 已通过 NPM 官方 registry 公开发布；GitHub tag `v0.3.1` 和 Release 仍绑定 release commit `1341b790a7d4c705f5cb1cfdcc066ac1d22ce078`。
+- 当前版本线：`package.json` 为 `0.3.2`。本计划不内嵌会过期的 commit/push/registry 状态；发布时必须按 [release runbook](release-runbook.md) 实时核对候选 commit、Node 20 CI、NPM tarball、dist-tag 和 clean-install smoke。
 - 本项目以 macOS Apple Silicon 为主验证目标；公开确定性 CI 覆盖 `ubuntu-latest` 与 `macos-14`，其中 `macos-14` 与本机验证属于 Mac 发布门禁。
-- `graph-engineering@0.3.1` 已通过 NPM 官方 registry 公开发布。本轮收口包含跨平台测试入口、CI 环境隔离和发布文档同步；发布前后的证据已记录在本节和 `findings.md`。
 - Windows 目前只完成部分适配，路径、进程隔离和真实 Agent sandbox 仍可能不稳定；protected real-agent smoke 仍是独立可选外部门，不是 Mac 用户的使用前置条件。Windows 不在本轮 Mac 发布 CI 矩阵内，没有真实 Windows 机器证据时继续标记为 `UNKNOWN`/`waiting_environment`。
-- Graph 相对单 Agent 的效果仍不作结论；必须由同一 fixture、goal、model、effort、budget 的至少五组 paired evaluation 证明。
-- 用户此前运行真实仓库的口头结果不替代可复核 Run artifact；标准项目状态目录中未找到可统一归档的当前报告，因此本计划不把它写成发布证据。
+- Graph 相对单 Agent 的效果仍不作结论；必须由同一 fixture、goal、model、effort、budget 的至少五组唯一 repetition paired evaluation 证明。
+- 用户此前运行真实仓库的口头结果不替代可复核 Run artifact；本轮已从本机临时状态中定位并独立检查 4 条 GoFish/KopiAI Run，生成了不含源码、路径和报告正文的私有脱敏索引。它仍只是 operational feedback，不是发布或效果证据。
+- 用户已确认 Codex / `gpt-5.6-terra` / `medium` 及 2,500,000 token、240 分钟的每臂硬预算。首轮真实启动通过了状态目录隔离检查，但当前 custom provider 返回 `401 API_KEY_REQUIRED`，两臂均未形成可比较结果；无效运行已在 checkout 外私有归档，不能升级为效果结论。
 
 本节覆盖旧阶段记录中的“未发布”“未同步”“CI 未观察”等历史状态；旧日期下的结果保留作为审计轨迹，不再作为当前结论。
 
-### 本轮收口验证（本机；2026-08-30）
+### 本轮候选收口验证（本机；2026-08-31）
 
 - `npm test`：exit 0，302 个测试，296 pass、6 skipped、0 fail；Shell glob 不再参与测试文件发现。
-- `npm run test:eval`：exit 0，45/45；`npm run validate`：72/72；`npm run validate:package`：67 个文件、17 个发布 `.mjs`、0 个 denied path。
-- `npm run test:package-smoke`：exit 0；通过 NPM bin 验证 install、help、audit preview、doctor 和 package validate；`npm run release:check`：`ready`。
-- 本轮变更未修改用户仓库、未运行真实模型、未提交 Graph 自身运行结果，也没有把 Windows real-agent smoke 或 Graph-vs-baseline 效果写成已证明结论。
+- `npm run test:archive`：exit 0，4/4；覆盖归档脱敏、未完成 Run 保留、路径/符号链接拒绝和时间戳输入边界。`npm run test:package-policy`：exit 0，5/5，覆盖发布包私有内容扫描、生命周期契约路由和发布控制字段。
+- `npm run test:eval`：exit 0，66/66；`npm run validate`：72/72；`npm run validate:package`：69 个文件、17 个发布 `.mjs`、0 个 denied path。
+- `npm run test:package-smoke`：exit 0；通过 NPM bin 验证 install、help、audit preview、doctor 和 package validate，当前 Mac `doctor` 返回 `ready`；`npm run release:check`：`ready`。56 个源码 `.mjs` 语法检查、固定 Go 1.27.0 `build`/`vet`/`test` 和 `git diff --check` 均通过。
+- 候选 `graph-engineering-0.3.2.tgz` 共 69 个文件，新增的发布 runbook 和旧路径兼容入口均进入 tarball；tar 边界、symlink、私密内容和旧契约路径扫描通过。精确 SHA-256/integrity 只记录在不进入 npm artifact 的根目录验收记录中，避免包内文档对自身哈希形成失真的循环引用。`npm audit --omit=dev --json` 因仓库无 lockfile 返回 `ENOLOCK`，未冒充依赖审计通过。
+- 最终复审补上 scorer-only 输入的完整性校验：任一 arm 的 `token_budget` 或 `timeout_minutes` 不是正 safe integer、缺少非空 regression evidence/合法 timing，或 finding 没有显式 `validated: true` 时，不能贡献可比样本或指标；重复或大小写冲突的 `(fixture_id, repetition)` 也会被拒绝，不能得到 `claim_ready=true`。
+- 本轮变更未修改用户仓库；真实模型启动已被认证错误阻断，未形成可评分的 Graph Run pair，也没有把 Windows real-agent smoke 或 Graph-vs-baseline 效果写成已证明结论。
+- 本机私有归档位于 checkout 外的本地私有路径（路径不写入仓库），4/4 records、invalid 0、`claim_ready=false`；该文件不进入 Git 或 NPM。
 - 发布证据：release commit 为 `1341b790a7d4c705f5cb1cfdcc066ac1d22ce078`；[GitHub CI run 33307211330](https://github.com/aabbcdl/graph-engineering/actions/runs/33307211330) 的 Ubuntu/macOS 四个 job 全部通过；NPM `0.3.1` 为 `latest`，tarball 为 67 个文件，shasum 为 `09e4b6ff80a89829a15c520e45b74d02652de704`；[v0.3.1 GitHub Release](https://github.com/aabbcdl/graph-engineering/releases/tag/v0.3.1) 已发布。
 
 ## 阶段计划与状态
@@ -102,8 +108,8 @@
 - `graph-engineering events` 已提供无模型、只读的事件流读取入口。
 - `preview`、`diff`、`apply`（含 `--dry-run` 与选择性 `--file`）、`recheck`、`runs`、`gc` 六个控制面操作已实现并有 CLI 契约测试覆盖（只读性、无状态残留、变更分类、冲突检查、部分应用记录、recheck 守卫与 `already-satisfied` 快路径）。
 - 15 项控制面改进及后续产品契约修复已落地；发布准备由 `npm run test:eval`、`npm run validate`、`npm run validate:package`、`npm run test:package-smoke` 和 `npm run release:check` 共同门禁，当前版本的精确结果记录在最新收口章节。
-- npm 包边界已通过 tarball 检查：本轮 `0.3.1` 为 67 个文件、18 个 references、8 个 agents，且不包含 `evals/`、隐藏测试或仓库专用 smoke 工具；`npm pack --dry-run` 同样确认包含新的 runtime module map 和 marketing kit。安装后的显式 Skill installer、`help`、audit `preview`、fail-closed `doctor` 和 package `validate` 已由 public-bin smoke 覆盖；即使用户 `CODEX_HOME` 为空，运行器也会发现包内七个可供规划的 specialist。
-- `graph-engineering@0.3.0` 已通过 NPM 官方 registry 发布并验证为 `latest`；公开 GitHub `main` 与源代码同步已完成。后续 patch release 必须绑定明确提交、tag 和 tarball 校验。
+- npm 包边界已通过 tarball 检查：当前 `0.3.2` 为 69 个文件、18 个 references、8 个 agents，且不包含 `evals/`、隐藏测试或仓库专用 smoke 工具；`npm pack --dry-run` 同样确认包含 runtime module map、marketing kit、release runbook 和生命周期兼容入口。安装后的显式 Skill installer、`help`、audit `preview`、fail-closed `doctor` 和 package `validate` 已由 public-bin smoke 覆盖；即使用户 `CODEX_HOME` 为空，运行器也会发现包内七个可供规划的 specialist。
+- `graph-engineering@0.3.0` 和 `graph-engineering@0.3.1` 的 NPM/GitHub 发布记录属于历史基线证据；当前 `0.3.2` 必须绑定新的明确提交、远程 CI、tag、Release 和 tarball 校验后才能发布。
 - 之前记录的旧测试数字属于对应日期的历史证据；不能覆盖本轮跨平台修复后的新验证结果。
 - 本计划、设计说明、架构说明和使用说明已同步描述同一状态语义。
 
@@ -138,13 +144,13 @@ submodule separate 聚合和自动快照瘦身仍是后续设计/实验任务，
 
 ## 当前仍需区分的验收门
 
-- 真实 Agent 能力：Mac 真实仓库运行可作为使用反馈，但仓库中没有统一、可复核的当前 Run artifact；因此不把它升级为通用 `task-ready` 或发布统计证据。Windows protected smoke 仍是独立可选门。
+- 真实 Agent 能力：Mac 真实仓库运行已形成私有脱敏索引，可作为使用反馈；它不含足够的绑定条件，不能升级为通用 `task-ready` 或发布统计证据。Windows protected smoke 仍是独立可选门。
 - Graph 实际效果：`npm run test:eval` 只证明 harness contract。当前没有满足 Run v3 绑定的五组 comparable real-model pairs，既有记录保持 `claim_ready=false`；因此不能声称 Graph 比 baseline 更有效或更省 token。
-- 发布状态：CI、tarball、NPM registry、Git tag 和 GitHub Release 已完成核对；`0.3.1` 在上述 release commit 上标记为 `verified-current`。
+- 发布状态：`0.3.1` 是明确的回滚基线；`0.3.2` 的实时状态不由本文缓存，必须按 [release runbook](release-runbook.md) 对照当前 commit、CI、registry、tag 和 NPM artifact 后再下结论。
 
 ## 本轮边界
 
-- 本轮允许提交、推送和发布 `0.3.1`，但不修改用户的其他项目、不部署服务，也不执行不可逆数据操作。
+- 本轮允许为 `0.3.2` 候选执行已授权的 commit/push 和精确 SHA CI 验证；不据此自动创建 tag、GitHub Release 或执行 NPM publish，也不修改用户的其他项目、不部署服务、不执行不可逆数据操作。
 - 不把 partial 结果自动合并回源工作区。
 - 不用模型轮询替代确定性 watcher。
 - 不用新的 Graph 运行来修改 Graph 自身，避免递归和资源互相占用。

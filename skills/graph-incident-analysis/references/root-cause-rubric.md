@@ -55,7 +55,7 @@ The entire analysis process must remain internal.
 
 ## Workflow Integration
 
-Read `统一工作流契约.md` and append the canonical artifact fields. Keep immediate mitigation and durable-fix routing separate so the controller can send them to different gates.
+Read `../../autonomous-engineering-graph/references/lifecycle-contract.md` and append the canonical artifact fields. Keep immediate mitigation and durable-fix routing separate so the controller can send them to different gates.
 
 ---
 
@@ -347,7 +347,7 @@ State the diagnosis confidence and, if below C3, exactly what evidence or reprod
 
 ## Workflow Artifact
 
-Append the canonical fields from `生命周期扩展/统一工作流契约.md` so the workflow controller can route the mitigation and durable fix independently.
+Append the canonical fields from `../../autonomous-engineering-graph/references/lifecycle-contract.md` so the workflow controller can route the mitigation and durable fix independently.
 
 ---
 

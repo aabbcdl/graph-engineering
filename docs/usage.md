@@ -149,6 +149,29 @@ All these commands are read-only except an explicitly requested `apply` or
 `gc --execute`. They never commit, push, deploy, publish, start Graph, or
 delete source workspace files.
 
+## Private Real-Run Archive
+
+The source checkout includes a maintainer-only archive utility for consolidating
+real-repository Run history without copying source code, workspace contents, or
+report bodies. It records sanitized status/budget/node summaries plus hashes and
+presence of selected evidence files. The output is operational feedback only;
+it is not a public effectiveness claim and should remain outside the repository
+unless it has passed a separate privacy review.
+
+This utility is intentionally source-checkout tooling and is not part of the
+published NPM runtime surface:
+
+```bash
+node scripts/archive-run-records.mjs \
+  --root "/path/to/run-root-one" \
+  --root "/path/to/run-root-two" \
+  --output "/path/to/private-archive/index.json"
+```
+
+The utility skips managed workspace directories and does not follow symlinked
+summary files. The generated index explicitly keeps `claim_ready=false` until
+the separate bound paired-evaluation protocol has completed.
+
 Use `--max-review-nodes <1-6>` only when you intentionally want a bounded
 review fan-out. The default is six specialist nodes for a broad audit; lowering
 it is recorded in the run and is preserved when the run is resumed. Results

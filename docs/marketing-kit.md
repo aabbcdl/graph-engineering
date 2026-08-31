@@ -54,7 +54,7 @@ flowchart LR
 | L0 | CLI、安装包和状态契约能运行 | 本地语法、单元、集成、package smoke |
 | L1 | 预算、取消、恢复和证据链按契约工作 | fake-agent 回归与 run.json/runtime-state.json 对照 |
 | L2 | 在真实仓库上能完成指定任务 | 绑定仓库、目标、模型、预算的真实 Run 报告 |
-| L3 | 相比单 Agent 有稳定收益 | 至少五组同 fixture、goal、model、effort、budget 的 paired evaluation |
+| L3 | 相比单 Agent 有稳定收益 | 至少五组唯一 repetition、同 fixture、goal、model、effort、budget 的 paired evaluation |
 | L4 | 用户长期愿意采用 | 安装成功率、首次有效 Run、复用率、失败恢复率和支持反馈 |
 
 当前可以宣传 L0/L1 的工程证据；L2 需要逐个展示真实 Run；L3/L4 必须等外部实测，不能用测试数量代替。
@@ -173,7 +173,7 @@ graph-engineering start \
 2. 一段 90 秒终端录屏：安装 → preview → review Run → report；
 3. 一张架构图：用户目标 → Graph 控制平面 → 隔离工作区 / Agent / 证据；
 4. 一份脱敏的完整 Run 报告：包含成功、等待、取消或恢复中的真实状态；
-5. 一份 paired evaluation 报告：至少五组绑定条件的 Graph 与单 Agent 对照，并同时报告质量、成本、耗时和失败率。
+5. 一份 paired evaluation 报告：至少五组唯一 repetition 的绑定条件 Graph 与单 Agent 对照，并同时报告质量、成本、耗时和失败率。
 
 README 和录屏负责让人理解，Run 报告负责让人相信，paired evaluation 负责让人判断是否值得采用。
 
@@ -181,6 +181,6 @@ README 和录屏负责让人理解，Run 报告负责让人相信，paired evalu
 
 - GitHub 仓库 URL 已确定，README 和公开文档中不再保留仓库地址占位符；
 - Mac 安装、Codex/Claude backend doctor 和真实小仓库 Run 有机器证据；
-- NPM `graph-engineering@0.3.1` 已公开发布，包内容检查通过，具备明确版本和显式 Skill 安装命令；公开仓库、CI、registry、tag 和 Release 证据已完成对齐；
+- 每个版本的公开声明都必须按 [release runbook](release-runbook.md) 绑定自身的 commit、CI、registry、tarball、dist-tag 和 clean-install 证据；`0.3.2` 不得沿用 `0.3.1` 的发布身份；
 - 真实 Agent smoke、paired evaluation 和产品效果结论分开报告；
 - 所有截图、录屏、报告和文案都移除私有路径、凭据、token 与用户源码。

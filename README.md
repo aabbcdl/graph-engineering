@@ -381,14 +381,15 @@ Use `codex.planner=<model>` or `claude.planner=<model>` when names differ by bac
 
 ## Proving Value
 
-Do not claim that Graph finds or fixes more defects from one run. The paired harness freezes one fixture, gives independent copies to Graph and a single-agent baseline, enforces matching goal/model/effort/budget declarations, rejects budget overruns, and reports paired 95% intervals. At least five complete comparable pairs are required before any fixture-scoped performance statement is allowed.
+Do not claim that Graph finds or fixes more defects from one run. The paired harness freezes one fixture, gives independent copies to Graph and a single-agent baseline, enforces matching goal/model/effort/budget declarations, rejects budget overruns, and reports paired 95% intervals. At least five distinct complete comparable pairs, identified by unique `(fixture_id, repetition)` values, are required before any fixture-scoped performance statement is allowed.
 
 Windows compatibility remains an external and currently incomplete gate. Until
 the protected Codex / Claude read-only and workspace-write smokes run on a real
 Windows host, the status is `UNKNOWN`/`waiting_environment`; Mac-side
 preparation is not Windows evidence. Likewise, no claim that Graph saves tokens
-or improves effectiveness is allowed until at least five complete paired
-evaluations bind the same fixture, goal, model, effort, and budget.
+or improves effectiveness is allowed until at least five distinct complete
+paired evaluations (unique `(fixture_id, repetition)`) bind the same fixture,
+goal, model, effort, and budget.
 
 See [docs/usage.md](docs/usage.md) and [docs/architecture.md](docs/architecture.md).
 The paired evaluation harness is maintained in the source checkout under
@@ -423,6 +424,8 @@ and [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
 ```bash
 npm test
+npm run test:archive
+npm run test:package-policy
 npm run test:eval
 npm run validate
 npm run validate:package
@@ -452,14 +455,16 @@ Each command creates one temporary Git repository, makes one small real model ca
 
 ## Status
 
-Version `0.3.1` is suitable for controlled local repository work on the
-Mac-first path. The source
-checkout also contains a separate paired-evaluation harness, but the npm
-artifact is only the installable control plane. Production automation still
-depends on the reliability and permissions of the configured agent CLIs and
-model services. The protected Windows real-agent workflow is manual/nightly
-only, currently not fully validated, and is not part of ordinary pull-request
-model spend.
+`package.json` declares the `0.3.2` release line. A release claim is valid only
+when the exact Git commit, Node 20 Ubuntu/macOS CI run, NPM tarball identity,
+dist-tag, and clean-install smoke agree; see the
+[release runbook](docs/release-runbook.md). The published `0.3.1` artifact and
+tag remain the documented rollback baseline. The source checkout also contains
+a separate paired-evaluation harness, but the npm artifact is only the
+installable control plane. Production automation still depends on the
+reliability and permissions of the configured agent CLIs and model services.
+The protected Windows real-agent workflow is manual/nightly only, currently
+not fully validated, and is not part of ordinary pull-request model spend.
 
 ## License
 

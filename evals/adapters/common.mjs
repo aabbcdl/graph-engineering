@@ -1,4 +1,8 @@
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { access, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -13,6 +17,85 @@ function requiredArgument(name) {
   const value = argument(name);
   if (!value) throw new Error(`${name} is required`);
   return value;
+}
+
+function pathIsInside(parent, candidate) {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function canonicalPath(target) {
+  const resolved = path.resolve(target);
+  let existing = resolved;
+  while (!existsSync(existing)) {
+    try {
+      if (lstatSync(existing).isSymbolicLink()) return null;
+    } catch (error) {
+      if (error?.code !== "ENOENT") return null;
+    }
+    const parent = path.dirname(existing);
+    if (parent === existing) return null;
+    existing = parent;
+  }
+  try {
+    const canonicalExisting = realpathSync(existing);
+    return path.join(canonicalExisting, resolved.slice(existing.length).replace(/^[/\\]+/, ""));
+  } catch {
+    return null;
+  }
+}
+
+function pathsOverlap(left, right) {
+  return pathIsInside(left, right) || pathIsInside(right, left);
+}
+
+function gitInspectionEnvironment(sourceEnvironment = process.env) {
+  const environment = { ...sourceEnvironment };
+  for (const key of Object.keys(environment)) {
+    // Ambient Git redirectors can make rev-parse inspect a different checkout
+    // or index than the workspace supplied by the harness.
+    if (/^GIT_/i.test(key)) delete environment[key];
+  }
+  return {
+    ...environment,
+    GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+  };
+}
+
+function workspaceGitRoot(workspace) {
+  const result = spawnSync("git", ["-C", path.resolve(workspace), "rev-parse", "--show-toplevel"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    env: gitInspectionEnvironment(),
+    windowsHide: true,
+  });
+  if (result.status !== 0) return null;
+  const root = String(result.stdout || "").trim();
+  return root || null;
+}
+
+function evaluationStateRoot({ output, workspace }) {
+  const resolvedOutput = path.resolve(output);
+  const candidate = path.join(path.dirname(resolvedOutput), "graph-state");
+  const sourceRoot = workspaceGitRoot(workspace) || path.resolve(workspace);
+  const canonicalSourceRoot = canonicalPath(sourceRoot);
+  const canonicalCandidate = canonicalPath(candidate);
+  if (!canonicalSourceRoot || !canonicalCandidate) {
+    throw new Error("Evaluation state root could not be canonicalized safely");
+  }
+  if (!pathsOverlap(canonicalSourceRoot, canonicalCandidate)) return candidate;
+
+  const identity = createHash("sha256")
+    .update(`${path.resolve(workspace)}\0${resolvedOutput}`)
+    .digest("hex")
+    .slice(0, 20);
+  const fallback = path.join(path.resolve(os.tmpdir()), "graph-engineering-eval-state", identity);
+  const canonicalFallback = canonicalPath(fallback);
+  if (!canonicalFallback || pathsOverlap(canonicalSourceRoot, canonicalFallback)) {
+    throw new Error("Evaluation state root must be outside the source checkout");
+  }
+  return fallback;
 }
 
 function optionalPositiveNumber(name) {
@@ -104,7 +187,13 @@ async function loadEvaluator(fixtureId) {
 }
 
 function normalizedUsage(usage) {
-  if (!usage || !Number.isFinite(usage.input_tokens) || !Number.isFinite(usage.output_tokens)) return null;
+  if (
+    !usage ||
+    !Number.isSafeInteger(usage.input_tokens) ||
+    usage.input_tokens < 0 ||
+    !Number.isSafeInteger(usage.output_tokens) ||
+    usage.output_tokens < 0
+  ) return null;
   return {
     input_tokens: Number(usage.input_tokens),
     output_tokens: Number(usage.output_tokens),
@@ -154,6 +243,7 @@ async function readGoal(args) {
 
 export {
   evaluationArguments,
+  evaluationStateRoot,
   finishEvaluation,
   graphRunnerArguments,
   isRepositoryFinding,

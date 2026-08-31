@@ -132,7 +132,7 @@ If the agent is resumed after interruption, read the state and checkpoint first,
 
 # Canonical Workflow Contract
 
-When this prompt is used inside the lifecycle suite, consume and emit the shared artifact fields defined in `生命周期扩展/统一工作流契约.md`. Preserve the domain-specific report, but always expose task status, evidence, dependencies, validation, rollback, and next-stage routing in the canonical form.
+When this prompt is used inside the lifecycle suite, consume and emit the shared artifact fields defined in `../../autonomous-engineering-graph/references/lifecycle-contract.md`. Preserve the domain-specific report, but always expose task status, evidence, dependencies, validation, rollback, and next-stage routing in the canonical form.
 
 ---
 
@@ -877,7 +877,7 @@ Execution completion is not release approval. Route a completed result through `
 
 ## Workflow Artifact
 
-Append the canonical fields from `生命周期扩展/统一工作流契约.md` so `工作流控制器.md` can resume or route the result:
+Append the canonical fields from `../../autonomous-engineering-graph/references/lifecycle-contract.md` so `工作流控制器.md` can resume or route the result:
 
 - `artifact_id`, `type`, `source_stage`, and `source_version`
 - Overall status and per-task owner and status, including `PLAN_CORRECTED` and blockers

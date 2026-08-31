@@ -1075,7 +1075,7 @@ Explain the reason in one short paragraph.
 
 ## Workflow Artifact
 
-Append the canonical fields from `生命周期扩展/统一工作流契约.md` so `工作流控制器.md` can route this plan without manual copying:
+Append the canonical fields from `../../autonomous-engineering-graph/references/lifecycle-contract.md` so `工作流控制器.md` can route this plan without manual copying:
 
 - `artifact_id`, `type`, `source_stage`, and `source_version`
 - Decision status, authority, assumptions, evidence, confidence, and coverage gaps

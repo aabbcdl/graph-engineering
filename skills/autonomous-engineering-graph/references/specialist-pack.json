@@ -5,7 +5,7 @@
     {
       "target": "references/lifecycle-map.md",
       "source": "docs/review-prompts/生命周期扩展/README.md",
-      "sha256": "f24587bd6f0fd99ed83bb854e5719cab3e5135dcee67b21de0320b1c7efec836"
+      "sha256": "d23bac1ebb5f3576b110d8ba08ef3ad4b772118577d0e740d05c477cf377cf5e"
     },
     {
       "target": "references/lifecycle-contract.md",
@@ -15,7 +15,7 @@
     {
       "target": "references/lifecycle-controller.md",
       "source": "docs/review-prompts/生命周期扩展/工作流控制器.md",
-      "sha256": "b8523502bc177966f3309f91fcb7f39791c12a26ced5a4030304056e86dc5c9b"
+      "sha256": "5216f1f2bc73d0fb7fd5a02c6ef9972cf1f4cfbc20b4d628abef471de740eb63"
     }
   ],
   "skills": [
@@ -26,12 +26,12 @@
         {
           "target": "references/review-rubric.md",
           "source": "docs/review-prompts/Code_Review_Ultimate审查.md",
-          "sha256": "58e526bbf9f579e3c9fd97d6b9fda4cd2e60efea96a1343c0f05d5bab3690780"
+          "sha256": "c3c38c5ceb3644a466f9f9c58bbd983d7e87b8bef1df74bf7cb24195c7222d16"
         },
         {
           "target": "references/execution-rubric.md",
           "source": "docs/review-prompts/Code_Review_Execution_Ultimate修复.md",
-          "sha256": "c20fe78672d80512aecac4b275e342880df0921efc68dffe6408f4e1cf184064"
+          "sha256": "7571097cfc35b06a9d7caf2e16c9e42cc18ecb7b339f684f4ebff0ad59ac1df0"
         }
       ]
     },
@@ -42,12 +42,12 @@
         {
           "target": "references/review-rubric.md",
           "source": "docs/review-prompts/Product_Review_Ultimate审查.md",
-          "sha256": "c9dfbf756992143c18541d7ae188caac83564f75c15b7888fb49f51ee7fdc05d"
+          "sha256": "3ba4316dea0f0a9673fd61edff0a3cdb1e325f1915b83ef9b95c9f2d8949b262"
         },
         {
           "target": "references/execution-rubric.md",
           "source": "docs/review-prompts/Product_Improvement_Execution_Ultimate修复.md",
-          "sha256": "fce6ce2899e9997476b87b07c17d624acfe1ba4300e69e56bb0b518fac31cf9b"
+          "sha256": "d65af10b4114b0cd14c46f8513acdf835d3e27f1fb7dfafe3f06b11855d461e6"
         }
       ]
     },
@@ -58,12 +58,12 @@
         {
           "target": "references/review-rubric.md",
           "source": "docs/review-prompts/UX_UI_Review_Ultimate-审查.md",
-          "sha256": "a1dde1b183affcdd0060117a0c0a05d9f6ec22b01a20214b4a8fb2c69b2e329c"
+          "sha256": "8d58f1d6b5c96ed6c709607d0c98611c2c1a2e3744a833e621755c3a7ac47940"
         },
         {
           "target": "references/execution-rubric.md",
           "source": "docs/review-prompts/UX_UI_Improvement_Execution_Ultimate-修复.md",
-          "sha256": "636f8fcfea15b575b2c6c3560ac98609d7649a13e72a694dbda6dd33d80a14a2"
+          "sha256": "3f0c9d483ca45318c789acc4bcbecd6231ed93457984835be21996090a7addf6"
         }
       ]
     },
@@ -74,12 +74,12 @@
         {
           "target": "references/requirements-review.md",
           "source": "docs/review-prompts/生命周期扩展/需求评审.md",
-          "sha256": "ce8573b8ede650acee3e36f68c889f0b82f59a7c70b58ddbecadeafb5dd94655"
+          "sha256": "3f5f9f84bf697c0c0aaf98e1f19331892a447d2f17376c969ba3d536c28cacfa"
         },
         {
           "target": "references/feature-design.md",
           "source": "docs/review-prompts/生命周期扩展/新功能技术方案设计.md",
-          "sha256": "635963ef9147fbcd5a5f41cb1e1995fd4eb22d157a9bfacf58711169c5bd6bdd"
+          "sha256": "3fe28031b74da9c5e49d0b7dbcf5587e604c0457c646af25014d4178b6ceab70"
         }
       ]
     },
@@ -90,7 +90,7 @@
         {
           "target": "references/review-rubric.md",
           "source": "docs/review-prompts/生命周期扩展/安全与隐私审查.md",
-          "sha256": "119c9b71a17a133ef86b312ed410b0417e2bd3c510b52663437f4cac6f4ea194"
+          "sha256": "1e6c974adf5180f28e017cf616441293e65b7709cd04d931a4ea7d68a83c2f95"
         }
       ]
     },
@@ -101,7 +101,7 @@
         {
           "target": "references/root-cause-rubric.md",
           "source": "docs/review-prompts/生命周期扩展/线上问题根因分析.md",
-          "sha256": "ca8e1c4de67d7effe258ee785ac50a1c6036eee9ceb6292024ec0cccdbc2ca28"
+          "sha256": "310dd5cfced000cdb09bc427d33cd903f4340b2fa87ec00e2c1680a3b4f4fe13"
         }
       ]
     },
@@ -112,12 +112,12 @@
         {
           "target": "references/final-audit.md",
           "source": "docs/review-prompts/生命周期扩展/最终质量审计.md",
-          "sha256": "1ea46407a3e9bdc9e1ac63c20f85c6b228d5317e9e11df680bcbed65e8a1786d"
+          "sha256": "356e8e041d44d1754f181c4f0171effc69407b074b6f1b74d424605a278989f6"
         },
         {
           "target": "references/release-gate.md",
           "source": "docs/review-prompts/生命周期扩展/发布就绪关口.md",
-          "sha256": "5f17122eeb1f29d1d1515991918b0fb9f17e04e723b07fc466b74b4ce7066c83"
+          "sha256": "4ab7db0618349f29c914b26861a57a66e627beda05ffb57741a1faa73550d46c"
         }
       ]
     }

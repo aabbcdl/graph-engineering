@@ -4,9 +4,37 @@
 Implement the approved Graph Engineering hardening plan while preserving the existing dirty worktree, v1/v2 run readability, isolated execution, transactional apply, and explicit no-Graph-self-modification boundary.
 
 ## Current Phase
-Mac-first cross-platform/release closeout: completed and externally verified; Windows real-agent smoke remains optional (2026-08-30)
+Mac-first `0.3.2` release-candidate assurance; external release state is verified live from GitHub/NPM rather than cached in this plan (2026-08-31)
 
-## 2026-08-30 closeout scope
+## Published baseline and current candidate
+
+- Published baseline: `graph-engineering@0.3.1`, tag `v0.3.1`, and GitHub Release remain bound to release commit `1341b790a7d4c705f5cb1cfdcc066ac1d22ce078`.
+- Current source version: `package.json` version `0.3.2`. Use `docs/release-runbook.md` to bind the live commit, CI, tarball, registry, tag, and publication state before any release action.
+- The local gates below are evidence for the candidate only; they do not retroactively change the published baseline.
+
+## Release-control contract
+
+- Installed lifecycle Skills read `skills/autonomous-engineering-graph/references/lifecycle-contract.md`; the old Chinese path is a compatibility pointer only.
+- `docs/release-runbook.md` fixes release/monitoring ownership, exact identity checks, a zero-tolerance failure threshold, and the `0.3.1` dist-tag/deprecation rollback.
+- `validate:package`, `release:check`, package-policy regressions, and Ubuntu/macOS CI reject missing controls or legacy Skill references.
+- Current local gate: 302 total / 296 pass / 6 skipped, archive 4/4, package policy 5/5, eval 66/66, specialist validation 72/72, package smoke/release check/Go/syntax/diff pass.
+- Current deterministic tarball: 69 files, SHA-256 `caf37784720672c882ddf38f282cac71e02b6fb2a0e31872cab18231020af8d2`; isolated `0.3.1 -> 0.3.2 -> 0.3.1` installer rollback passes.
+- NPM publish, Git tag, and GitHub Release remain separately authorized external actions.
+
+## 2026-08-31 candidate closeout (historical local-preparation checkpoint)
+
+- [x] Move the unreleased candidate from the already-published `0.3.1` version to `0.3.2` and add an unreleased changelog entry.
+- [x] Separate the published `0.3.1` evidence from the current dirty checkout in public and project status documents.
+- [x] Fresh `npm test`: 302 total, 296 pass, 6 skipped, 0 fail.
+- [x] Fresh focused gates: archive 4/4, package policy 3/3, eval 65/65.
+- [x] Reproduce and close the archive's intermediate-directory symlink escape; summary hashing now rejects every symlinked path component.
+- [x] Reject fractional or unsafe scorer-only token/time budgets, duplicate/case-colliding pair identities, unvalidated findings, empty regression evidence, and invalid timing so malformed input cannot unlock `claim_ready`; focused adversarial regressions pass.
+- [x] Verify the published `0.3.1` tarball identity and an isolated npm/Skill installer `0.3.1 -> 0.3.2 -> 0.3.1` upgrade/rollback round trip.
+- [x] Re-run specialist validation, package validation, installed-bin smoke, release check, syntax, diff, Go fixture, tarball, and secret/private-content checks after the version/document edits: all local gates pass; the repeated `0.3.2` tarball is byte-identical (67 files, SHA-256 `c82da2d8d59a89197514f9afe64090bfd4c9389df12b824e9f02b53d2c180ed0`).
+- [x] Re-run the final read-only quality and release-readiness audit after the last correction: no unresolved local P0/P1 remains, but Final Quality Audit is `BLOCK` and Release Readiness is `NO-GO`/`WAITING_GATE` until an authorized candidate commit, matching Node 20 remote CI, NPM authentication, and a concrete rollout monitoring/rollback owner are evidenced; tag/Release/published artifact identity remains post-action verification.
+- [x] Do not commit, push, tag, create a GitHub Release, or publish NPM in this final local-preparation pass.
+
+## 2026-08-30 closeout scope (published baseline; historical)
 
 - [x] Pin the published `0.3.0` source provenance to tag `v0.3.0` before new changes.
 - [x] Replace shell-dependent test globs with deterministic Node file enumeration.
@@ -17,13 +45,25 @@ Mac-first cross-platform/release closeout: completed and externally verified; Wi
 - [x] Complete local gates, publish `0.3.1`, push the release commit, and create `v0.3.1`/GitHub Release.
 - [x] Record the exact commit, registry version, tarball identity, CI run, and remaining external gates.
 
-### 2026-08-30 release evidence
+### 2026-08-30 release evidence (published baseline; historical)
 
 - Release commit: `1341b790a7d4c705f5cb1cfdcc066ac1d22ce078` (`ci: make the Mac evaluation gate reproducible`).
 - Public CI: [run 33307211330](https://github.com/aabbcdl/graph-engineering/actions/runs/33307211330), all four Ubuntu/macOS jobs passed.
 - NPM: `graph-engineering@0.3.1`, `latest=0.3.1`, 67 files, shasum `09e4b6ff80a89829a15c520e45b74d02652de704`.
 - GitHub: tag `v0.3.1` and [release](https://github.com/aabbcdl/graph-engineering/releases/tag/v0.3.1) published; [v0.3.0 release](https://github.com/aabbcdl/graph-engineering/releases/tag/v0.3.0) also backfilled for the existing public tag.
-- Remaining independent gates: Windows is only partially adapted and may be unreliable for real-agent work, so protected smoke remains optional/`UNKNOWN`; five comparable real-model Graph-vs-baseline pairs and a unified archive of real-repository Run artifacts are still absent.
+- Remaining independent gates: Windows is only partially adapted and may be unreliable for real-agent work, so protected smoke remains optional/`UNKNOWN`; five comparable real-model Graph-vs-baseline pairs are blocked on authorized provider authentication after the confirmed launch choice.
+
+## 2026-08-30 real-run archive and paired-evaluation preparation
+
+- [x] Add a source-checkout archive utility that discovers Run records without following workspace directories or symlinked summary files.
+- [x] Keep the archive public-safe: no raw source, workspace, report body, absolute path, or credential export; only sanitized metadata and evidence-file hashes/presence are retained.
+- [x] Archive 4 located real-repository Runs from GoFish and KopiAI into a private local index outside the checkout (path intentionally omitted from repository documentation) (1 `completed`, 1 `completed_with_gaps`, 2 `waiting_budget`; invalid records 0).
+- [x] Freeze the Mac JobQueue pilot entrypoint in `evals/manifest.pilot-jobqueue.json`: 5 repetitions, alternating arm order, same fixture/goal/model/effort/budget, Darwin arm64 toolchain hash, and hard aggregate budget contract.
+- [x] Add deterministic archive tests and a CI-maintained `npm run test:archive` developer check.
+- [ ] Run the 5 real Graph-vs-single-agent pairs. The owner confirmed Codex / `gpt-5.6-terra` / `medium` and accepted the declared 2,500,000-token / 240-minute per-arm budget, but the first launch was blocked by `401 API_KEY_REQUIRED` from the current custom provider; no comparable pair was produced.
+- [x] Preserve and privately archive the incomplete launch outside the checkout; keep it operational feedback only with `claim_ready=false`.
+- [x] Add a fail-fast guard so an infrastructure-invalid pair is persisted but cannot start later repetitions and consume more model quota; retain legitimate measured `negative_result` samples without truncating later repetitions.
+- [x] Keep the private operational archive out of public effectiveness evidence; its `claim_ready` value remains `false` by design.
 
 ## 2026-08-28 NPM package preparation
 
@@ -31,7 +71,7 @@ Mac-first cross-platform/release closeout: completed and externally verified; Wi
 - [x] Keep the public tarball limited to the runner, Skills, runtime references, documentation, and installer; exclude `evals/`, tests, package smoke, validator, and Windows smoke tooling.
 - [x] Add a macOS NPM-bin smoke path that installs the tarball into an isolated prefix, runs the installer into temporary user directories, and validates `help`, `preview`, `doctor`, and `validate`.
 - [x] Add `release:check` and `prepublishOnly` guards for repository metadata, public-doc placeholders, required bins, and final tarball contents.
-- [x] Latest package evidence: 66 files / 17 shipped `.mjs`, `npm run validate:package` pass, `npm run test:package-smoke` pass, `npm run test:eval` 45/45, `npm run validate` 72/72, host `darwin-arm64`.
+- [x] Previous package evidence: 66 files / 17 shipped `.mjs`, `npm run validate:package` pass, `npm run test:package-smoke` pass, `npm run test:eval` 45/45, `npm run validate` 72/72, host `darwin-arm64` (historical; superseded for the current candidate).
 - [x] Supply the real GitHub repository URL and remove public-doc placeholders before release; `npm run release:check` reports `ready`.
 - [x] Publish `graph-engineering@0.3.0` to the public NPM registry through the browser web-auth/2FA flow; registry verification reports `latest=0.3.0`.
 - [x] Commit and push the `0.3.0` release-preparation changes to the public GitHub repository; `main` was synced at `f716250`.

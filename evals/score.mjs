@@ -2,7 +2,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { aggregatePairs, scorePair } from "./lib/scorer.mjs";
+import { aggregatePairs, MINIMUM_PAIRS_FOR_CLAIM, scorePair, validateMinimumPairs } from "./lib/scorer.mjs";
 import { canonicalJsonSha256 } from "./lib/pair-runner.mjs";
 
 function argument(name) {
@@ -12,8 +12,17 @@ function argument(name) {
 
 const inputPath = path.resolve(argument("--input") || "evals/results/score-input.json");
 const outputPath = path.resolve(argument("--output") || "evals/results/report.json");
-const minimumPairs = Number.parseInt(argument("--minimum-pairs") || "5", 10);
 const input = JSON.parse(await readFile(inputPath, "utf8"));
+const declaredMinimumPairs = input.minimum_pairs_for_claim === undefined
+  ? MINIMUM_PAIRS_FOR_CLAIM
+  : validateMinimumPairs(input.minimum_pairs_for_claim);
+const minimumPairsArgument = argument("--minimum-pairs");
+const minimumPairs = validateMinimumPairs(
+  minimumPairsArgument === null ? declaredMinimumPairs : Number(minimumPairsArgument),
+);
+if (minimumPairs < declaredMinimumPairs) {
+  throw new Error(`--minimum-pairs cannot be lower than input minimum_pairs_for_claim (${declaredMinimumPairs})`);
+}
 const harness = input.harness || null;
 for (const fixture of input.fixtures || []) {
   if (!fixture.truth) throw new Error("Missing hidden truth for fixture " + fixture.id);

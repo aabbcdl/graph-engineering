@@ -16,7 +16,11 @@ Every pair must use the same:
 - one positive `timeout_minutes` upper bound;
 - the complete launch fingerprint, including runner, runtime, harness libraries, adapters, manifest, revision, and Node environment.
 
-Both arms must complete, report backend token usage, remain within budget, and satisfy the adapter contract. A mismatch or overrun rejects the entire pair. Arm order alternates by repetition to reduce first-run and cache bias.
+Both arms must complete, report backend token usage as non-negative safe
+integers, remain within positive safe-integer token/time budgets, and satisfy
+the adapter contract. A mismatch, malformed budget, unknown usage, or overrun
+rejects the entire pair. Arm order alternates by repetition to reduce first-run
+and cache bias.
 
 To isolate orchestration value, configure every Graph role to the same model used by the baseline. A separate role-optimized experiment may measure an operational profile, but it must not be presented as a pure Graph-versus-single-agent causal comparison.
 
@@ -49,7 +53,7 @@ arm process starts. The scorer repeats the check on `score-input.json`.
 
 Claim-ready evaluation requires the harness itself to run from a Git checkout with a resolvable HEAD. A package-only installation cannot supply that revision and is deliberately fail-closed as descriptive history rather than producing a version-unbound claim.
 
-Rejected pairs are classified as `infrastructure` (the measurement itself failed: adapter contract, identity, unknown usage, declaration mismatch) or `negative_result` (the measured system genuinely did not finish or exceeded its budget). Both block comparability, but only the latter is evidence about the system under test.
+Rejected pairs are classified as `infrastructure` (the measurement itself failed: adapter contract, identity, unknown usage, declaration mismatch) or `negative_result` (the measured system genuinely did not finish or exceeded its budget). Both block comparability, but only the latter is evidence about the system under test. An `infrastructure` rejection is persisted and stops later repetitions; a measured `negative_result` is retained without truncating the remaining repetitions, so the sample is not biased toward successful completions.
 
 ## Fixtures And Hidden Truth
 
@@ -116,7 +120,39 @@ npm run eval:run -- --manifest evals/manifest.json --output-dir evals/results/ru
 npm run eval:score -- --input evals/results/run-001/score-input.json --output evals/results/run-001/report.json
 ```
 
-Repository tests exercise the harness with `evals/tests/fake-arm.mjs`; they never run a real model. The paired evaluation harness is source-checkout tooling and is intentionally excluded from the npm package; controlled evaluator modules, truth files, and hidden tests never become an installable runtime surface. The JobQueue pilot pins Go 1.27.0 binary SHA-256 values for both `win32-x64` and `linux-x64`; CI provisions that exact Go version, and the harness selects only the current platform contract before build/test evidence is accepted.
+Repository tests exercise the harness with `evals/tests/fake-arm.mjs`; they never run a real model. The paired evaluation harness is source-checkout tooling and is intentionally excluded from the npm package; controlled evaluator modules, truth files, and hidden tests never become an installable runtime surface. The JobQueue pilot pins Go 1.27.0 binary SHA-256 values for each declared host (`win32-x64`, `linux-x64`, and `darwin-arm64`); CI provisions that exact Go version, and the harness selects only the current platform contract before build/test evidence is accepted.
+
+### Mac pilot status
+
+`manifest.pilot-jobqueue.json` is preflight-validated for Apple Silicon on
+2026-08-30: it selects the `darwin-arm64` Go 1.27.0 contract, freezes fixture
+SHA-256 `24fa2993897318991d9d8db6d4be5806f4e02a2b5fcdae1f20bf3431e21a3754`,
+and binds the truth SHA-256 declared in the manifest. Both adapters are the
+Codex-backed Graph and single-agent workflows, and the manifest currently
+declares model `gpt-5.6-terra` at `medium` reasoning effort.
+
+The pilot has five alternating repetitions, so it can start up to ten real
+model arm runs. Each arm is bounded by the declared 2,500,000-token aggregate
+budget and 240-minute timeout. Run it only after the owner confirms that exact
+backend/model choice and accepts the quota/time exposure:
+
+```bash
+npm run eval:run -- \
+  --manifest evals/manifest.pilot-jobqueue.json \
+  --output-dir evals/results/run-001
+npm run eval:score -- \
+  --input evals/results/run-001/score-input.json \
+  --output evals/results/run-001/report.json
+```
+
+The owner confirmed the pilot choice and budget on 2026-08-31. The first real
+launch passed the Mac state-root isolation preflight, then both Codex arms were
+rejected by the configured custom provider with `401 API_KEY_REQUIRED`; neither
+arm reported backend token usage, so the pair was infrastructure-invalid. The
+incomplete run is retained outside the checkout for operational debugging and
+cannot replace the five bound comparable pairs. The harness now persists an
+infrastructure-invalid pair and stops before launching a later repetition;
+legitimate measured negative results remain eligible for later repetitions.
 
 ## Metrics
 
@@ -131,4 +167,20 @@ The scorer reports:
 - cost efficiency: `validated_defects_per_mtok`, `verified_repairs_per_mtok`, and `tokens_per_validated_defect`;
 - paired mean deltas with 95% intervals.
 
-`tokens_per_validated_defect` is undefined when an arm has no validated defect; undefined cost metrics produce no delta, confidence interval, or named advantage. At least five complete comparable pairs with `harness_binding: "bound"` are required before `claim_ready` becomes true. Even then, `statistically_supported_advantages` names a direction only when its paired 95% interval lies wholly on the favorable side of zero — including the cost-efficiency metrics, so a quality advantage that costs disproportionate tokens will not be named as an unqualified win. All conclusions remain scoped to the tested fixtures, models, budgets, and versions.
+`tokens_per_validated_defect` is undefined when an arm has no validated defect;
+undefined cost metrics produce no delta, confidence interval, or named
+advantage. At least five distinct complete comparable pairs, identified by
+unique `(fixture_id, repetition)` values, with `harness_binding: "bound"` are
+required before `claim_ready` becomes true; the manifest, scorer library, and
+`evals/score.mjs` all reject a lower threshold or duplicate pair identity. The scorer also
+revalidates each arm's positive safe-integer token/time budgets, so a hand-edited
+score input cannot bypass the manifest contract with fractional or unsafe
+numbers. Only findings carrying an explicit `validated: true` may contribute to
+defect, precision, repair, or cost-efficiency metrics. Every comparable arm must
+also retain at least one passing regression check plus non-negative safe-integer
+wall and queue timing evidence. Even then,
+`statistically_supported_advantages` names a direction only
+when its paired 95% interval lies wholly on the favorable side of zero —
+including the cost-efficiency metrics, so a quality advantage that costs
+disproportionate tokens will not be named as an unqualified win. All conclusions
+remain scoped to the tested fixtures, models, budgets, and versions.

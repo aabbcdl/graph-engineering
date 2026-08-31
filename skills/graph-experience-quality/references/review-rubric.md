@@ -67,7 +67,7 @@ The entire discovery and analysis process must remain internal.
 
 ## Workflow Integration
 
-When used inside the lifecycle suite, read `生命周期扩展/统一工作流契约.md` and append its canonical artifact fields. Keep the UX/UI Improvement Plan as the domain report; the workflow controller normalizes it for routing.
+When used inside the lifecycle suite, read `../../autonomous-engineering-graph/references/lifecycle-contract.md` and append its canonical artifact fields. Keep the UX/UI Improvement Plan as the domain report; the workflow controller normalizes it for routing.
 
 ---
 
@@ -1513,7 +1513,7 @@ S
 
 ## Workflow Artifact
 
-Append the canonical fields from `生命周期扩展/统一工作流契约.md`. Include rendered evidence, coverage gaps, task status, validation, rollback, and next-stage routing.
+Append the canonical fields from `../../autonomous-engineering-graph/references/lifecycle-contract.md`. Include rendered evidence, coverage gaps, task status, validation, rollback, and next-stage routing.
 
 ---
 

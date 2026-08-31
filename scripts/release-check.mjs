@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { scanPackagedFiles, validateReleaseDocuments } from "./package-content-policy.mjs";
+
 const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const packageJsonPath = path.join(projectRoot, "package.json");
 const placeholderPattern = /<repository-url>|<owner>|<repo>/i;
@@ -115,12 +117,29 @@ async function main() {
   const packed = runNpmPack();
   const violations = packed.files.filter((file) => deniedPatterns.some((pattern) => pattern.test(file)));
   addBlocker(violations.length > 0, "package contains denied paths: " + violations.join(", "));
+  const contentViolations = await scanPackagedFiles({ projectRoot, files: packed.files });
+  addBlocker(
+    contentViolations.length > 0,
+    "package contains private content: " + contentViolations.map((item) => `${item.path} [${item.rule}]`).join(", "),
+  );
+  const releaseDocumentViolations = await validateReleaseDocuments({
+    projectRoot,
+    files: packed.files,
+    packageJson,
+  });
+  addBlocker(
+    releaseDocumentViolations.length > 0,
+    "release documents are incomplete: " +
+      releaseDocumentViolations.map((item) => `${item.path} [${item.rule}]`).join(", "),
+  );
 
   const required = [
     "package.json",
     "README.md",
     "LICENSE",
     "SECURITY.md",
+    "docs/release-runbook.md",
+    "生命周期扩展/统一工作流契约.md",
     "scripts/install.mjs",
     "skills/autonomous-engineering-graph/scripts/graph-runner.mjs",
     "skills/autonomous-engineering-graph/references/specialist-pack.json",

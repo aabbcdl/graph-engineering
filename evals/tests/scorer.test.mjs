@@ -32,7 +32,7 @@ function adapterIdentity(overrides = {}) {
 }
 
 function arm(overrides = {}) {
-  const tokenBudget = overrides.token_budget ?? 1000;
+  const tokenBudget = Object.hasOwn(overrides, "token_budget") ? overrides.token_budget : 1000;
   const timeoutMinutes = Object.hasOwn(overrides, "timeout_minutes") ? overrides.timeout_minutes : 180;
   const identity = Object.hasOwn(overrides, "harness_identity")
     ? overrides.harness_identity
@@ -48,7 +48,7 @@ function arm(overrides = {}) {
     usage: { input_tokens: 300, output_tokens: 200 },
     harness_identity: identity,
     findings: [],
-    regression_checks: [],
+    regression_checks: [{ id: "tests", status: "pass" }],
     completed_gates: true,
     wall_ms: 100,
     queue_ms: 0,
@@ -99,6 +99,19 @@ test("cost efficiency metrics normalize quality by observed token use", () => {
   assert.equal(scored.baseline.tokens_per_validated_defect, 500);
 });
 
+test("missing or false validation cannot inflate defect and repair metrics", () => {
+  for (const finding of [
+    { defect_id: "defect-1", fixed: true, repair_verified: true },
+    { defect_id: "defect-1", validated: false, fixed: true, repair_verified: true },
+    { defect_id: "not-in-truth" },
+  ]) {
+    const scored = scorePair(pair(1, arm({ findings: [finding] }), arm()), truth, harness);
+    assert.equal(scored.graph.validated_defects, 0);
+    assert.equal(scored.graph.false_positives, 0);
+    assert.equal(scored.graph.verified_repairs, 0);
+  }
+});
+
 test("snapshot, goal, model, effort, and budget mismatches reject a pair", () => {
   for (const [field, value] of [
     ["fixture_sha256", "other-fixture"],
@@ -113,19 +126,69 @@ test("snapshot, goal, model, effort, and budget mismatches reject a pair", () =>
   }
 });
 
-test("an arm must report a positive wall-time budget before it can be comparable", () => {
-  const errors = comparabilityErrors(
-    pair(1, arm({ timeout_minutes: undefined }), arm({ timeout_minutes: undefined })),
-    harness,
-  );
-  assert.ok(errors.some((error) => /graph timeout budget is invalid/.test(error)));
-  assert.ok(errors.some((error) => /baseline timeout budget is invalid/.test(error)));
+test("an arm must report positive integer token and wall-time budgets before it can be comparable", () => {
+  for (const overrides of [
+    { token_budget: undefined, timeout_minutes: undefined },
+    { token_budget: 1000.5, timeout_minutes: 180.5 },
+    { token_budget: Number.MAX_SAFE_INTEGER + 1, timeout_minutes: Number.MAX_SAFE_INTEGER + 1 },
+  ]) {
+    const errors = comparabilityErrors(pair(1, arm(overrides), arm(overrides)), harness);
+    assert.ok(errors.some((error) => /graph token budget is invalid/.test(error)));
+    assert.ok(errors.some((error) => /baseline token budget is invalid/.test(error)));
+    assert.ok(errors.some((error) => /graph timeout budget is invalid/.test(error)));
+    assert.ok(errors.some((error) => /baseline timeout budget is invalid/.test(error)));
+  }
 });
 
 test("a token-budget overrun and an adapter contract failure reject a pair", () => {
   const errors = comparabilityErrors(pair(1, arm({ usage: { input_tokens: 900, output_tokens: 200 } }), arm({ harness_errors: ["wrong model"] })), harness);
   assert.ok(errors.some((error) => /exceeded token budget/.test(error)));
   assert.ok(errors.some((error) => /adapter contract failed/.test(error)));
+});
+
+test("an arm with failed regression gates is a measured negative result, not a comparable run", () => {
+  const scored = scorePair(
+    pair(1, arm({ completed_gates: false, regression_checks: [{ id: "tests", status: "fail" }] }), arm()),
+    truth,
+    harness,
+  );
+  assert.equal(scored.comparable, false);
+  assert.equal(scored.rejection_class, "negative_result");
+  assert.ok(scored.comparability_errors.some((error) => /regression gates did not pass/.test(error)));
+});
+
+test("negative or fractional token usage is infrastructure-invalid", () => {
+  const scored = scorePair(
+    pair(1, arm({ usage: { input_tokens: -1, output_tokens: 10 } }), arm()),
+    truth,
+    harness,
+  );
+  assert.equal(scored.comparable, false);
+  assert.equal(scored.rejection_class, "infrastructure");
+  assert.ok(scored.comparability_errors.some((error) => /token usage is unknown/.test(error)));
+});
+
+test("token usage totals that exceed the safe integer range are infrastructure-invalid", () => {
+  const scored = scorePair(
+    pair(1, arm({ usage: { input_tokens: Number.MAX_SAFE_INTEGER, output_tokens: 1 } }), arm()),
+    truth,
+    harness,
+  );
+  assert.equal(scored.comparable, false);
+  assert.equal(scored.rejection_class, "infrastructure");
+  assert.ok(scored.comparability_errors.some((error) => /token usage is unknown/.test(error)));
+});
+
+test("missing regression evidence or invalid duration metrics are infrastructure-invalid", () => {
+  for (const overrides of [
+    { regression_checks: [] },
+    { wall_ms: -1 },
+    { queue_ms: 0.5 },
+  ]) {
+    const scored = scorePair(pair(1, arm(overrides), arm()), truth, harness);
+    assert.equal(scored.comparable, false);
+    assert.equal(scored.rejection_class, "infrastructure");
+  }
 });
 
 test("missing adapter identity rejects a pair as an infrastructure-invalid sample", () => {
@@ -268,6 +331,30 @@ test("fewer than five comparable pairs prohibit performance claims", () => {
   assert.equal(report.claim_ready, false);
   assert.equal(report.harness_binding, "bound");
   assert.match(report.conclusion, /No performance claim allowed/);
+});
+
+test("claim thresholds cannot be lowered below five pairs", () => {
+  assert.throws(
+    () => aggregatePairs([], 4, harness),
+    /minimum pair count must be an integer of at least 5/,
+  );
+  assert.throws(
+    () => aggregatePairs([], 0, harness),
+    /minimum pair count must be an integer of at least 5/,
+  );
+});
+
+test("duplicate pair identities cannot satisfy the minimum sample threshold", () => {
+  const scored = scorePair(pair(1), truth, harness);
+  assert.throws(
+    () => aggregatePairs(Array.from({ length: 5 }, () => scored), 5, harness),
+    /duplicate scored pair identity: fixture\/1/,
+  );
+  const caseVariant = scorePair({ ...pair(1), fixture_id: "FIXTURE" }, truth, harness);
+  assert.throws(
+    () => aggregatePairs([scored, caseVariant], 5, harness),
+    /duplicate scored pair identity: fixture\/1/,
+  );
 });
 
 test("five valid pairs permit only measured fixture-scoped conclusions", () => {

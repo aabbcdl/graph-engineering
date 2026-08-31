@@ -14,11 +14,24 @@ function finite(value) {
   return Number.isFinite(value) ? Number(value) : null;
 }
 
+function tokenCount(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function positiveBudget(value) {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+function nonNegativeDuration(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
 function usageTotal(usage) {
   if (!usage || typeof usage !== "object") return null;
-  const input = finite(usage.input_tokens);
-  const output = finite(usage.output_tokens);
+  const input = tokenCount(usage.input_tokens);
+  const output = tokenCount(usage.output_tokens);
   if (input === null || output === null) return null;
+  if (input > Number.MAX_SAFE_INTEGER - output) return null;
   return input + output;
 }
 
@@ -35,7 +48,8 @@ function wilsonInterval(successes, total, z = 1.96) {
 // measured system actually did (unfinished run, budget overrun). Any error
 // about the measurement itself (adapter contract, identity, unknown usage,
 // declaration mismatch) makes the sample infrastructure-invalid instead.
-const NEGATIVE_RESULT_PATTERNS = [/did not complete/, /exceeded token budget/];
+const NEGATIVE_RESULT_PATTERNS = [/did not complete/, /exceeded token budget/, /regression gates did not pass/];
+const MINIMUM_PAIRS_FOR_CLAIM = 5;
 const HARNESS_HASH_FIELDS = [
   "runner_sha256",
   "runtime_sha256",
@@ -134,6 +148,29 @@ function pairedDifference(left, right) {
   return Number.isFinite(left) && Number.isFinite(right) ? left - right : null;
 }
 
+function validateMinimumPairs(value) {
+  if (!Number.isSafeInteger(value) || value < MINIMUM_PAIRS_FOR_CLAIM) {
+    throw new Error(`minimum pair count must be an integer of at least ${MINIMUM_PAIRS_FOR_CLAIM}`);
+  }
+  return value;
+}
+
+function validatePairIdentities(scoredPairs) {
+  if (!Array.isArray(scoredPairs)) throw new Error("scored pairs must be an array");
+  const identities = new Set();
+  for (const pair of scoredPairs) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(pair?.fixture_id || "")) {
+      throw new Error("scored pair fixture_id is missing or invalid");
+    }
+    if (!Number.isSafeInteger(pair.repetition) || pair.repetition <= 0) {
+      throw new Error(`scored pair repetition is invalid for fixture ${pair.fixture_id}`);
+    }
+    const identity = `${pair.fixture_id.toLowerCase()}/${pair.repetition}`;
+    if (identities.has(identity)) throw new Error(`duplicate scored pair identity: ${identity}`);
+    identities.add(identity);
+  }
+}
+
 function classifyRejection(errors) {
   if (!errors.length) return null;
   const infrastructure = errors.some((error) => !NEGATIVE_RESULT_PATTERNS.some((pattern) => pattern.test(error)));
@@ -154,9 +191,19 @@ function comparabilityErrors(pair, harness = null) {
     if (!arm?.goal_sha256) errors.push(`${name} goal hash is missing`);
     if (!arm?.model) errors.push(`${name} actual model is missing`);
     if (!arm?.reasoning_effort) errors.push(`${name} actual reasoning effort is missing`);
-    if (!Number.isFinite(arm?.token_budget) || arm.token_budget <= 0) errors.push(`${name} token budget is invalid`);
-    if (!Number.isFinite(arm?.timeout_minutes) || arm.timeout_minutes <= 0) errors.push(`${name} timeout budget is invalid`);
+    if (!positiveBudget(arm?.token_budget)) errors.push(`${name} token budget is invalid`);
+    if (!positiveBudget(arm?.timeout_minutes)) errors.push(`${name} timeout budget is invalid`);
     if (!arm || arm.status !== "completed") errors.push(`${name} did not complete`);
+    if (typeof arm?.completed_gates !== "boolean") errors.push(`${name} completed_gates is missing or invalid`);
+    else if (!arm.completed_gates) errors.push(`${name} did not complete declared gates`);
+    if (!Array.isArray(arm?.regression_checks) || arm.regression_checks.length === 0) {
+      errors.push(`${name} regression checks are missing or invalid`);
+    }
+    else if (arm.regression_checks.some((check) => check?.status !== "pass")) {
+      errors.push(`${name} regression gates did not pass`);
+    }
+    if (!nonNegativeDuration(arm?.wall_ms)) errors.push(`${name} wall time is missing or invalid`);
+    if (!nonNegativeDuration(arm?.queue_ms)) errors.push(`${name} queue time is missing or invalid`);
     if (Array.isArray(arm?.harness_errors) && arm.harness_errors.length) {
       errors.push(`${name} adapter contract failed: ${arm.harness_errors.join("; ")}`);
     }
@@ -192,12 +239,12 @@ function comparabilityErrors(pair, harness = null) {
       errors.push(`graph Run schema version ${graphIdentity.run_version} differs from harness expectation ${expectedRunVersion}`);
     }
   }
-  if (Number.isFinite(left?.token_budget)) {
+  if (positiveBudget(left?.token_budget)) {
     if (graphIdentity?.run_budget?.max_tokens !== left.token_budget) {
       errors.push(`graph Run max token budget differs from declared token budget`);
     }
   }
-  if (Number.isFinite(left?.timeout_minutes)) {
+  if (positiveBudget(left?.timeout_minutes)) {
     if (graphIdentity?.run_budget?.max_minutes !== left.timeout_minutes) {
       errors.push(`graph Run max minute budget differs from declared timeout`);
     }
@@ -210,15 +257,20 @@ function armMetrics(arm, truth) {
   const findings = Array.isArray(arm.findings) ? arm.findings : [];
   const detected = new Set(
     findings
-      .filter((finding) => finding.validated !== false && knownDefects.has(finding.defect_id))
+      .filter((finding) => finding.validated === true && knownDefects.has(finding.defect_id))
       .map((finding) => finding.defect_id),
   );
   const falsePositives = findings.filter(
-    (finding) => finding.validated !== false && (!finding.defect_id || !knownDefects.has(finding.defect_id)),
+    (finding) => finding.validated === true && (!finding.defect_id || !knownDefects.has(finding.defect_id)),
   ).length;
   const fixed = new Set(
     findings
-      .filter((finding) => finding.fixed === true && finding.repair_verified === true && knownDefects.has(finding.defect_id))
+      .filter((finding) =>
+        finding.validated === true &&
+        finding.fixed === true &&
+        finding.repair_verified === true &&
+        knownDefects.has(finding.defect_id),
+      )
       .map((finding) => finding.defect_id),
   );
   const regressionFailures = (arm.regression_checks || []).filter((check) => check.status !== "pass").length;
@@ -316,6 +368,8 @@ function pairedMeanInterval(values, confidence = 0.95) {
 }
 
 function aggregatePairs(scoredPairs, minimumPairs = 5, harness = null) {
+  validateMinimumPairs(minimumPairs);
+  validatePairIdentities(scoredPairs);
   const comparable = scoredPairs.filter((pair) => pair.comparable);
   const rejected = scoredPairs.filter((pair) => !pair.comparable);
   const rejectedInfrastructure = rejected.filter((pair) => pair.rejection_class === "infrastructure").length;
@@ -428,8 +482,10 @@ export {
   armMetrics,
   classifyRejection,
   comparabilityErrors,
+  MINIMUM_PAIRS_FOR_CLAIM,
   pairedMeanInterval,
   scorePair,
+  validateMinimumPairs,
   usageTotal,
   wilsonInterval,
 };

@@ -112,6 +112,152 @@ test("every evaluation records the harness fingerprint that produced it", async 
   assert.equal(persisted.manifest_sha256, result.manifest_sha256);
 });
 
+test("an invalid pair is persisted and stops later repetitions before more model calls", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "graph-eval-invalid-"));
+  t.after(async () => {
+    const { rm } = await import("node:fs/promises");
+    await rm(root, { recursive: true, force: true });
+  });
+  const fixture = path.join(root, "fixture");
+  await mkdir(fixture);
+  await writeFile(path.join(fixture, "fixture.txt"), "frozen input\n", "utf8");
+  await writeFile(path.join(root, "truth.json"), `${JSON.stringify({ defects: [] })}\n`, "utf8");
+  const manifest = {
+    version: 1,
+    model: "fixture-model",
+    reasoning_effort: "high",
+    token_budget: 1000,
+    timeout_minutes: 180,
+    fixtures: [{ id: "fixture", snapshot: "fixture", goal: "Audit fixture", truth_file: "truth.json", repetitions: 2 }],
+    arms: {
+      graph: { command: [process.execPath, FAKE_ARM] },
+      baseline: { command: [process.execPath, FAKE_ARM, "--invalid-contract"] },
+    },
+  };
+  const manifestPath = path.join(root, "manifest.json");
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  const outputDirectory = path.join(root, "results");
+
+  await assert.rejects(
+    runPairedEvaluation({ manifestPath, outputDirectory }),
+    /refusing to launch another repetition/,
+  );
+  const persisted = JSON.parse(await readFile(path.join(outputDirectory, "pairs.json"), "utf8"));
+  assert.equal(persisted.pairs.length, 1);
+  assert.equal(persisted.pairs[0].baseline.status, "invalid");
+  assert.equal(persisted.pairs[0].baseline.harness_errors.length, 1);
+  assert.equal(await readFile(path.join(outputDirectory, "runs", "fixture", "002", "goal.txt"), "utf8").catch(() => null), null);
+});
+
+test("an adapter startup failure is persisted as an infrastructure-invalid pair", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "graph-eval-startup-failure-"));
+  t.after(async () => {
+    const { rm } = await import("node:fs/promises");
+    await rm(root, { recursive: true, force: true });
+  });
+  const fixture = path.join(root, "fixture");
+  await mkdir(fixture);
+  await writeFile(path.join(fixture, "fixture.txt"), "frozen input\n", "utf8");
+  await writeFile(path.join(root, "truth.json"), `${JSON.stringify({ defects: [] })}\n`, "utf8");
+  const manifest = {
+    version: 1,
+    model: "fixture-model",
+    reasoning_effort: "high",
+    token_budget: 1000,
+    timeout_minutes: 180,
+    fixtures: [{ id: "fixture", snapshot: "fixture", goal: "Audit fixture", truth_file: "truth.json", repetitions: 2 }],
+    arms: {
+      graph: { command: [path.join(root, "missing-adapter")] },
+      baseline: { command: [process.execPath, FAKE_ARM] },
+    },
+  };
+  const manifestPath = path.join(root, "manifest.json");
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  const outputDirectory = path.join(root, "results");
+
+  await assert.rejects(
+    runPairedEvaluation({ manifestPath, outputDirectory }),
+    /refusing to launch another repetition/,
+  );
+  const persisted = JSON.parse(await readFile(path.join(outputDirectory, "pairs.json"), "utf8"));
+  assert.equal(persisted.pairs.length, 1);
+  assert.equal(persisted.pairs[0].graph.status, "invalid");
+  assert.ok(persisted.pairs[0].graph.harness_errors.some((error) => /adapter failed to start/.test(error)));
+  assert.equal(await readFile(path.join(outputDirectory, "runs", "fixture", "002", "goal.txt"), "utf8").catch(() => null), null);
+});
+
+test("a scorer-only Graph Run contract mismatch stops later repetitions", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "graph-eval-run-contract-"));
+  t.after(async () => {
+    const { rm } = await import("node:fs/promises");
+    await rm(root, { recursive: true, force: true });
+  });
+  const fixture = path.join(root, "fixture");
+  await mkdir(fixture);
+  await writeFile(path.join(fixture, "fixture.txt"), "frozen input\n", "utf8");
+  await writeFile(path.join(root, "truth.json"), `${JSON.stringify({ defects: [] })}\n`, "utf8");
+  const manifest = {
+    version: 1,
+    model: "fixture-model",
+    reasoning_effort: "high",
+    token_budget: 1000,
+    timeout_minutes: 180,
+    fixtures: [{ id: "fixture", snapshot: "fixture", goal: "Audit fixture", truth_file: "truth.json", repetitions: 2 }],
+    arms: {
+      graph: { command: [process.execPath, FAKE_ARM, "--invalid-run-contract"] },
+      baseline: { command: [process.execPath, FAKE_ARM] },
+    },
+  };
+  const manifestPath = path.join(root, "manifest.json");
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  const outputDirectory = path.join(root, "results");
+
+  await assert.rejects(
+    runPairedEvaluation({ manifestPath, outputDirectory }),
+    /refusing to launch another repetition: .*Run schema version 2 differs from harness expectation 3/s,
+  );
+  const persisted = JSON.parse(await readFile(path.join(outputDirectory, "pairs.json"), "utf8"));
+  assert.equal(persisted.pairs.length, 1);
+  assert.equal(persisted.pairs[0].graph.status, "completed");
+  assert.deepEqual(persisted.pairs[0].graph.harness_errors, []);
+  assert.equal(await readFile(path.join(outputDirectory, "runs", "fixture", "002", "goal.txt"), "utf8").catch(() => null), null);
+});
+
+test("a measured negative result remains eligible for later repetitions", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "graph-eval-negative-result-"));
+  t.after(async () => {
+    const { rm } = await import("node:fs/promises");
+    await rm(root, { recursive: true, force: true });
+  });
+  const fixture = path.join(root, "fixture");
+  await mkdir(fixture);
+  await writeFile(path.join(fixture, "fixture.txt"), "frozen input\n", "utf8");
+  await writeFile(path.join(root, "truth.json"), `${JSON.stringify({ defects: [] })}\n`, "utf8");
+  const manifest = {
+    version: 1,
+    model: "fixture-model",
+    reasoning_effort: "high",
+    token_budget: 1000,
+    timeout_minutes: 180,
+    fixtures: [{ id: "fixture", snapshot: "fixture", goal: "Audit fixture", truth_file: "truth.json", repetitions: 2 }],
+    arms: {
+      graph: { command: [process.execPath, FAKE_ARM, "--negative-result"] },
+      baseline: { command: [process.execPath, FAKE_ARM] },
+    },
+  };
+  const manifestPath = path.join(root, "manifest.json");
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  const outputDirectory = path.join(root, "results");
+
+  const result = await runPairedEvaluation({ manifestPath, outputDirectory });
+  assert.equal(result.pairs.length, 2);
+  assert.equal(result.pairs[0].graph.status, "waiting_budget");
+  assert.equal(result.pairs[1].graph.status, "waiting_budget");
+  assert.equal(await readFile(path.join(outputDirectory, "runs", "fixture", "002", "goal.txt"), "utf8"), "Audit fixture\n");
+  const scoreInput = JSON.parse(await readFile(result.score_input_path, "utf8"));
+  assert.equal(scoreInput.pairs.length, 2);
+});
+
 test("evaluation manifests require one positive shared wall-time budget", () => {
   const manifest = {
     version: 1,
@@ -135,6 +281,27 @@ test("evaluation manifests require one positive shared wall-time budget", () => 
     }),
     /truth_sha256 must be a SHA-256 hex string/,
   );
+  assert.throws(
+    () => validateManifest({ ...manifest, timeout_minutes: 180, minimum_pairs_for_claim: 4 }),
+    /minimum pair count must be an integer of at least 5/,
+  );
+  assert.throws(
+    () => validateManifest({
+      ...manifest,
+      timeout_minutes: 180,
+      fixtures: [manifest.fixtures[0], { ...manifest.fixtures[0] }],
+    }),
+    /Duplicate fixture id \(case-insensitive\): fixture/,
+  );
+  assert.throws(
+    () => validateManifest({
+      ...manifest,
+      timeout_minutes: 180,
+      fixtures: [manifest.fixtures[0], { ...manifest.fixtures[0], id: "FIXTURE" }],
+    }),
+    /Duplicate fixture id \(case-insensitive\): FIXTURE/,
+  );
+  assert.doesNotThrow(() => validateManifest({ ...manifest, timeout_minutes: 180, minimum_pairs_for_claim: 5 }));
 });
 
 test("truth hashing is stable across JSON whitespace and object key order", () => {
@@ -191,7 +358,7 @@ test("adapter contract rejects a changed declared wall-time budget", () => {
     timeout_minutes: 90,
     usage: { input_tokens: 10, output_tokens: 20 },
     findings: [],
-    regression_checks: [],
+    regression_checks: [{ id: "fixture", status: "pass" }],
     completed_gates: true,
   }, {
     model: "fixture-model",
@@ -218,7 +385,7 @@ test("adapter contract rejects an identity that omits declared harness contracts
       timeout_minutes: 180,
       usage: { input_tokens: 10, output_tokens: 20 },
       findings: [],
-      regression_checks: [],
+      regression_checks: [{ id: "fixture", status: "pass" }],
       completed_gates: true,
       budget_enforcement: budgetContract,
       harness_identity: { budget_contract: null, toolchain_contract: null },
@@ -234,4 +401,23 @@ test("adapter contract rejects an identity that omits declared harness contracts
   );
   assert.ok(errors.some((error) => /budget_contract/.test(error)));
   assert.ok(errors.some((error) => /toolchain_contract/.test(error)));
+});
+
+test("adapter contract rejects negative token usage", () => {
+  const errors = adapterErrors({
+    model: "fixture-model",
+    reasoning_effort: "high",
+    token_budget: 1000,
+    timeout_minutes: 180,
+    usage: { input_tokens: -1, output_tokens: 20 },
+    findings: [],
+    regression_checks: [{ id: "fixture", status: "pass" }],
+    completed_gates: true,
+  }, {
+    model: "fixture-model",
+    reasoningEffort: "high",
+    tokenBudget: 1000,
+    timeoutMinutes: 180,
+  });
+  assert.ok(errors.some((error) => /non-negative integers/.test(error)));
 });

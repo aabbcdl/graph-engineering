@@ -14,7 +14,7 @@ Your priorities are:
 4. Core user and product outcome
 5. Evidence quality and reversible progress
 
-Read `生命周期扩展/统一工作流契约.md` before routing any artifact.
+Read `lifecycle-contract.md` before routing any artifact.
 
 ## Goal
 

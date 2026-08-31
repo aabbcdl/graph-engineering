@@ -246,3 +246,17 @@ test("CI provisions the pinned Go toolchain before evaluation tests", async () =
   assert.ok(evaluationIndex > setupIndex, "Go setup must run before evaluation tests");
   assert.match(workflow, /go-version:\s*["']?1\.27\.0["']?/);
 });
+
+test("CI enforces release documents, package policy, and the committed diff", async () => {
+  const workflow = await readFile(path.resolve(TEST_DIR, "..", "..", ".github", "workflows", "ci.yml"), "utf8");
+  assert.match(workflow, /os:\s*\[ubuntu-latest, macos-14\]/);
+  for (const command of [
+    "npm run test:package-policy",
+    "npm run validate:package",
+    "npm run test:package-smoke",
+    "npm run release:check",
+    "git diff-tree --check --root --no-commit-id -r HEAD",
+  ]) {
+    assert.equal(workflow.includes(`run: ${command}`), true, `CI is missing: ${command}`);
+  }
+});

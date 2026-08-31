@@ -40,3 +40,57 @@ test("scorer rejects score input whose declared truth hash differs from hidden t
     content.fixtures[0].truth_sha256,
   );
 });
+
+test("scorer honors the input minimum pair threshold when no CLI override is supplied", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "graph-score-threshold-"));
+  t.after(async () => {
+    const { rm } = await import("node:fs/promises");
+    await rm(root, { recursive: true, force: true });
+  });
+  const input = path.join(root, "score-input.json");
+  const output = path.join(root, "report.json");
+  await writeFile(input, JSON.stringify({ minimum_pairs_for_claim: 6, fixtures: [], pairs: [] }) + "\n", "utf8");
+  const result = spawnSync(process.execPath, [SCORE, "--input", input, "--output", output], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(JSON.parse(await readFile(output, "utf8")).minimum_pairs_for_claim, 6);
+});
+
+test("scorer refuses a CLI threshold below the input declaration", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "graph-score-threshold-"));
+  t.after(async () => {
+    const { rm } = await import("node:fs/promises");
+    await rm(root, { recursive: true, force: true });
+  });
+  const input = path.join(root, "score-input.json");
+  const output = path.join(root, "report.json");
+  await writeFile(input, JSON.stringify({ minimum_pairs_for_claim: 6, fixtures: [], pairs: [] }) + "\n", "utf8");
+  const result = spawnSync(process.execPath, [SCORE, "--input", input, "--output", output, "--minimum-pairs", "5"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(String(result.stderr || "") + "\n" + String(result.stdout || ""), /cannot be lower than input minimum_pairs_for_claim/);
+  await assert.rejects(readFile(output, "utf8"));
+});
+
+test("scorer rejects duplicate pair identities before writing a report", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "graph-score-duplicates-"));
+  t.after(async () => {
+    const { rm } = await import("node:fs/promises");
+    await rm(root, { recursive: true, force: true });
+  });
+  const input = path.join(root, "score-input.json");
+  const output = path.join(root, "report.json");
+  const pair = { fixture_id: "fixture", repetition: 1, graph: {}, baseline: {} };
+  await writeFile(input, JSON.stringify({ fixtures: [{ id: "fixture", truth: { defects: [] } }], pairs: [pair, pair] }) + "\n", "utf8");
+  const result = spawnSync(process.execPath, [SCORE, "--input", input, "--output", output], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(String(result.stderr || "") + "\n" + String(result.stdout || ""), /duplicate scored pair identity: fixture\/1/);
+  await assert.rejects(readFile(output, "utf8"));
+});

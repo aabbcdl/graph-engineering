@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { RUN_VERSION } from "../../skills/autonomous-engineering-graph/scripts/graph-runner.mjs";
+import { classifyRejection, comparabilityErrors, MINIMUM_PAIRS_FOR_CLAIM, validateMinimumPairs } from "./scorer.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -32,6 +33,20 @@ function canonicalJsonSha256(value) {
 
 function sha256Hex(value) {
   return typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
+}
+
+function gitInspectionEnvironment(sourceEnvironment = process.env) {
+  const environment = { ...sourceEnvironment };
+  for (const key of Object.keys(environment)) {
+    // Ambient Git redirectors can make harness identity inspect a different
+    // checkout, index, or object database than PROJECT_ROOT.
+    if (/^GIT_/i.test(key)) delete environment[key];
+  }
+  return {
+    ...environment,
+    GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+  };
 }
 
 function validateToolchainDeclaration(toolchain) {
@@ -136,6 +151,10 @@ function requiredString(value, label) {
   return value.trim();
 }
 
+function validTokenCount(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
 function validateManifest(manifest) {
   if (!manifest || manifest.version !== 1) throw new Error("Evaluation manifest version must be 1");
   requiredString(manifest.model, "model");
@@ -144,6 +163,7 @@ function validateManifest(manifest) {
   if (!Number.isSafeInteger(manifest.timeout_minutes) || manifest.timeout_minutes <= 0) {
     throw new Error("timeout_minutes must be a positive integer");
   }
+  if (manifest.minimum_pairs_for_claim !== undefined) validateMinimumPairs(manifest.minimum_pairs_for_claim);
   if (!Array.isArray(manifest.fixtures) || !manifest.fixtures.length) throw new Error("fixtures must not be empty");
   if (manifest.budget_contract !== undefined) {
     const contract = manifest.budget_contract;
@@ -160,8 +180,12 @@ function validateManifest(manifest) {
     }
     manifest.arms[arm].command.forEach((item) => requiredString(item, `arms.${arm}.command item`));
   }
+  const fixtureIds = new Set();
   for (const fixture of manifest.fixtures) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(fixture.id || "")) throw new Error(`Invalid fixture id: ${fixture.id}`);
+    const fixtureIdentity = fixture.id.toLowerCase();
+    if (fixtureIds.has(fixtureIdentity)) throw new Error(`Duplicate fixture id (case-insensitive): ${fixture.id}`);
+    fixtureIds.add(fixtureIdentity);
     requiredString(fixture.snapshot, `fixture ${fixture.id} snapshot`);
     requiredString(fixture.goal, `fixture ${fixture.id} goal`);
     requiredString(fixture.truth_file, `fixture ${fixture.id} truth_file`);
@@ -195,7 +219,13 @@ async function runProcess(argv, options) {
     });
   } catch (error) {
     await Promise.allSettled([stdout.close(), stderr.close()]);
-    throw error;
+    return {
+      code: null,
+      signal: null,
+      timed_out: false,
+      wall_ms: Date.now() - started,
+      spawn_error: error.message || String(error),
+    };
   }
   const timer = options.timeoutMs
     ? setTimeout(() => {
@@ -203,9 +233,15 @@ async function runProcess(argv, options) {
         child.kill();
       }, options.timeoutMs)
     : null;
-  const outcome = await new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", (code, signal) => resolve({ code, signal }));
+  const outcome = await new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    child.once("error", (error) => finish({ code: null, signal: null, spawn_error: error.message || String(error) }));
+    child.once("close", (code, signal) => finish({ code, signal }));
   }).finally(async () => {
     if (timer) clearTimeout(timer);
     await Promise.allSettled([stdout.close(), stderr.close()]);
@@ -226,11 +262,13 @@ function adapterErrors(raw, expected) {
   if (raw.timeout_minutes !== expected.timeoutMinutes) {
     errors.push(`reported timeout minutes ${raw.timeout_minutes ?? "missing"} does not match ${expected.timeoutMinutes}`);
   }
-  if (!raw.usage || !Number.isFinite(raw.usage.input_tokens) || !Number.isFinite(raw.usage.output_tokens)) {
-    errors.push("backend-reported input and output token usage is required");
+  if (!raw.usage || !validTokenCount(raw.usage.input_tokens) || !validTokenCount(raw.usage.output_tokens)) {
+    errors.push("backend-reported input and output token usage must be non-negative integers");
   }
   if (!Array.isArray(raw.findings)) errors.push("findings must be an array");
-  if (!Array.isArray(raw.regression_checks)) errors.push("regression_checks must be an array");
+  if (!Array.isArray(raw.regression_checks) || raw.regression_checks.length === 0) {
+    errors.push("regression_checks must be a non-empty array");
+  }
   if (typeof raw.completed_gates !== "boolean") errors.push("completed_gates must be boolean");
   if (expected.budgetContract) {
     const enforcement = raw.budget_enforcement;
@@ -315,7 +353,8 @@ async function runArm({
     budgetContract: manifest.budget_contract || null,
     toolchainContract,
   }) : [readError];
-  if (processResult.code !== 0) errors.push(`adapter exited with code ${processResult.code ?? "null"}`);
+  if (processResult.spawn_error) errors.push(`adapter failed to start: ${processResult.spawn_error}`);
+  else if (processResult.code !== 0) errors.push(`adapter exited with code ${processResult.code ?? "null"}`);
   if (processResult.timed_out) errors.push("adapter timed out");
   return {
     ...(raw || {}),
@@ -349,9 +388,13 @@ async function sha256File(target) {
   return createHash("sha256").update(await readFile(target)).digest("hex");
 }
 
-async function harnessIdentity({ manifestSha256 = null, budgetContract = null, toolchain = null } = {}) {
+async function harnessIdentity({ manifestSha256 = null, budgetContract = null, toolchain = null, environment = process.env } = {}) {
   const runnerPath = path.join(PROJECT_ROOT, "skills", "autonomous-engineering-graph", "scripts", "graph-runner.mjs");
-  const revision = spawnSync("git", ["rev-parse", "HEAD"], { cwd: PROJECT_ROOT, encoding: "utf8" });
+  const revision = spawnSync("git", ["rev-parse", "HEAD"], {
+    cwd: PROJECT_ROOT,
+    encoding: "utf8",
+    env: gitInspectionEnvironment(environment),
+  });
   return {
     revision: revision.status === 0 ? revision.stdout.trim() : null,
     runner_sha256: await sha256File(runnerPath),
@@ -390,7 +433,7 @@ async function runPairedEvaluation({ manifestPath, outputDirectory }) {
     manifest_sha256: manifestSha256,
     harness,
     generated_at: new Date().toISOString(),
-    minimum_pairs_for_claim: manifest.minimum_pairs_for_claim || 5,
+    minimum_pairs_for_claim: manifest.minimum_pairs_for_claim ?? MINIMUM_PAIRS_FOR_CLAIM,
     fixtures: [],
     pairs: [],
   };
@@ -426,9 +469,16 @@ async function runPairedEvaluation({ manifestPath, outputDirectory }) {
         });
       }
       if ((await hashTree(frozen.target)) !== frozen.sha256) throw new Error(`Adapter modified frozen fixture: ${fixture.id}`);
+      const pairComparabilityErrors = comparabilityErrors(pair, harness);
+      const pairRejectionClass = classifyRejection(pairComparabilityErrors);
       results.pairs.push(pair);
       await writeFile(path.join(pairDirectory, "pair.json"), `${JSON.stringify(pair, null, 2)}\n`, "utf8");
       await writeFile(path.join(resolvedOutput, "pairs.json"), `${JSON.stringify(results, null, 2)}\n`, "utf8");
+      if (pairRejectionClass === "infrastructure") {
+        throw new Error(
+          `Pair ${fixture.id}/${String(repetition).padStart(3, "0")} is infrastructure-invalid; refusing to launch another repetition: ${pairComparabilityErrors.join("; ")}`,
+        );
+      }
     }
   }
   const scoreInput = {

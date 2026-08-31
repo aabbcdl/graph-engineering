@@ -59,7 +59,7 @@ The entire analysis process must remain internal.
 
 ## Workflow Integration
 
-Read `统一工作流契约.md` and append the canonical artifact fields to the Feature Design Plan. Preserve assumptions, open decisions, dependencies, validation, rollout, rollback, and the safe resume point.
+Read `../../autonomous-engineering-graph/references/lifecycle-contract.md` and append the canonical artifact fields to the Feature Design Plan. Preserve assumptions, open decisions, dependencies, validation, rollout, rollback, and the safe resume point.
 
 ---
 
@@ -515,7 +515,7 @@ Contract merged, tests pass, event fires, flag defaults off.
 
 ## Workflow Artifact
 
-Append the canonical fields from `统一工作流契约.md`, including design tasks, dependencies, validation, compatibility, rollout, rollback, done definition, and next-stage routing.
+Append the canonical fields from `../../autonomous-engineering-graph/references/lifecycle-contract.md`, including design tasks, dependencies, validation, compatibility, rollout, rollback, done definition, and next-stage routing.
 
 ---
 

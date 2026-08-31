@@ -21,6 +21,9 @@ const executionHarness = await harnessIdentity({
   budgetContract: expectedHarness.budget_contract || null,
   toolchain: expectedHarness.toolchain_contract || expectedHarness.toolchain || null,
 });
+const invalidContract = process.argv.includes("--invalid-contract");
+const invalidRunContract = process.argv.includes("--invalid-run-contract");
+const negativeResult = process.argv.includes("--negative-result") && argument("--arm") === "graph";
 if (process.argv.includes("--assert-no-truth")) {
   const outputRoot = path.resolve(path.dirname(output), "..", "..", "..");
   const pairsPath = path.join(outputRoot, "pairs.json");
@@ -35,12 +38,12 @@ if (process.argv.includes("--assert-no-truth")) {
   }
 }
 const result = {
-  status: "completed",
+  status: negativeResult ? "waiting_budget" : "completed",
   model: argument("--model"),
   reasoning_effort: argument("--reasoning-effort"),
   token_budget: Number.parseInt(argument("--token-budget"), 10),
   timeout_minutes: Number.parseFloat(argument("--timeout-minutes")),
-  usage: { input_tokens: 100, output_tokens: 50 },
+  ...(invalidContract ? {} : { usage: { input_tokens: 100, output_tokens: 50 } }),
   harness_identity: {
     ...executionHarness,
     ...(argument("--arm") === "graph"
@@ -57,7 +60,12 @@ const result = {
     ? [{ defect_id: defectId, validated: true, fixed: true, repair_verified: true, title: `${goal}: ${fixture}` }]
     : [],
   regression_checks: [{ id: "fixture", status: "pass" }],
-  completed_gates: true,
+  completed_gates: !negativeResult,
   queue_ms: 0,
 };
+if (invalidRunContract && argument("--arm") === "graph") {
+  result.harness_identity.run_version -= 1;
+  result.harness_identity.run_budget.max_tokens -= 1;
+  result.harness_identity.run_budget.max_minutes -= 1;
+}
 await writeFile(output, `${JSON.stringify(result, null, 2)}\n`, "utf8");

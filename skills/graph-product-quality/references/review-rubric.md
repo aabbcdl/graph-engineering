@@ -65,7 +65,7 @@ The entire discovery and analysis process must remain internal.
 
 ## Workflow Integration
 
-When used inside the lifecycle suite, read `生命周期扩展/统一工作流契约.md` and append its canonical artifact fields. Keep the Product Improvement Plan as the domain report; the workflow controller normalizes it for routing.
+When used inside the lifecycle suite, read `../../autonomous-engineering-graph/references/lifecycle-contract.md` and append its canonical artifact fields. Keep the Product Improvement Plan as the domain report; the workflow controller normalizes it for routing.
 
 ---
 
@@ -1308,7 +1308,7 @@ XS (copy) / M (entitlement unification)
 
 ## Workflow Artifact
 
-Append the canonical fields from `生命周期扩展/统一工作流契约.md`. If a field cannot be verified, write `UNKNOWN` and add a coverage gap; do not invent a value.
+Append the canonical fields from `../../autonomous-engineering-graph/references/lifecycle-contract.md`. If a field cannot be verified, write `UNKNOWN` and add a coverage gap; do not invent a value.
 
 ---
 

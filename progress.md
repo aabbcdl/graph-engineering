@@ -1,12 +1,51 @@
 # Progress log
 
-## Current authoritative status (2026-08-30)
+## Current authoritative status (2026-08-31)
 
 - Mac Apple Silicon is the primary supported path; the deterministic CI matrix is Ubuntu + `macos-14`. Windows is currently only partially adapted and may be unreliable for real-agent work; protected smoke remains outside the Mac release gate.
-- Public NPM `0.3.1`, public GitHub `main`, tag `v0.3.1`, and GitHub Releases `v0.3.0`/`v0.3.1` are now present and traceable to the verified release commit.
+- Published baseline: NPM `0.3.1`, public GitHub `main`, tag `v0.3.1`, and GitHub Releases `v0.3.0`/`v0.3.1` are present and traceable to the verified release commit.
+- Current source version: `package.json` declares `0.3.2`. Live commit, CI, registry, tag, and publication state is intentionally not cached in this log; verify it from GitHub/NPM using `docs/release-runbook.md`.
 - The previous public CI run was red for two environment/entrypoint assumptions, not for Graph runtime behavior; both are now covered by deterministic fixes.
 - Windows protected real-agent smoke remains optional, external, and `UNKNOWN` for the Mac workflow. Graph-vs-baseline effectiveness remains unclaimed until five comparable pairs exist.
-- Real-repository runs reported during development are not converted into release evidence unless their Run artifacts can be located and independently checked.
+- Four located real-repository Runs are now represented in a private, public-safe archive index; the archive is operational feedback only and is not claim-ready.
+- The Mac JobQueue paired pilot launch was attempted with the confirmed Codex / `gpt-5.6-terra` / `medium` choice, but the current custom provider returned `401 API_KEY_REQUIRED`; no comparable pair exists and the effectiveness claim remains blocked. The current Mac source `doctor --agent-backend codex --json` independently returns `ready`; this does not prove provider authentication or Windows readiness.
+- Lifecycle Skills now resolve the packaged canonical workflow contract directly. The release runbook names `aabbcdl` as release/monitoring owner, treats any identity mismatch or clean-install smoke failure as a rollback trigger, and restores `latest` to `0.3.1` without deleting registry history.
+
+## 2026-08-31 release-control closeout
+
+- Replaced every installed Skill reference to the legacy workflow-contract path with a relative path to `skills/autonomous-engineering-graph/references/lifecycle-contract.md`; the Chinese compatibility entry is packaged as a pointer, not a second contract body.
+- Added package-policy regressions for release ownership, monitoring ownership, identity/smoke failure thresholds, rollback controls, unsafe registry deletion, stale contract paths, and noncanonical relative targets. Current focused results are archive 4/4, package policy 5/5, eval 66/66, and specialist validation 72/72.
+- Fresh full regression remains 302 total / 296 pass / 6 skipped / 0 fail. Go 1.27.0 darwin-arm64 build/vet/test, all source `.mjs` syntax checks, package validation, installed-bin smoke, release check, and `git diff --check` pass.
+- Three independent `0.3.2` packs are byte-identical: 69 files, SHA-256 `caf37784720672c882ddf38f282cac71e02b6fb2a0e31872cab18231020af8d2`, npm shasum `8951ea7d91f222ccb1053759d2f666741821f64b`, integrity `sha512-LF/b0Vf4675OZjKqmhfXni7hmlhvPSZPFdBfwLOtLHozMweLvKw6+Z537DeB+zrV/99Qtw3CBraxdQN9YRitkw==`, and unpacked size 1,370,037 bytes.
+- The isolated installer round trip `0.3.1 -> 0.3.2 -> 0.3.1` passes exact installed-tree hashing, candidate `help`/no-state `preview`, canonical-contract resolution, and baseline restoration. `npm audit --omit=dev --json` remains unavailable with `ENOLOCK` because the zero-dependency package intentionally has no lockfile; no audit-pass claim is made.
+- Exact Git commit/CI and current NPM authentication are live external evidence and are deliberately verified outside this file before release. NPM publish, Git tag, and GitHub Release remain separately authorized actions.
+
+## 2026-08-30 real-run archive and paired pilot preparation (historical)
+
+- Added `scripts/archive-run-records.mjs` plus four deterministic tests. It discovers four selected GoFish/KopiAI Run records, excludes workspace trees, refuses symlinked summary files, and exports only sanitized metadata and hashes.
+- Generated the local private archive index outside the checkout (path intentionally omitted from repository documentation): 14,774 bytes, 4/4 records archived, statuses `completed=1`, `completed_with_gaps=1`, `waiting_budget=2`, precise sensitive-string scan empty, and `claim_ready=false`.
+- `evals/manifest.pilot-jobqueue.json` is the Mac pilot entrypoint. It binds fixture/goal/model/effort/budget/timeout/toolchain and alternates Graph/baseline order across 5 repetitions; the harness test suite remains fake-agent-only until launch approval.
+- Added `npm run test:archive` to the developer checks and Mac/Ubuntu runtime CI. No real model call, source repository mutation, commit, push, publication, or public archive export was performed for the paired pilot.
+
+## 2026-08-31 paired pilot launch and harness guard (historical)
+
+- The owner confirmed the exact pilot choice: Codex backend, `gpt-5.6-terra`, `medium`, with a hard aggregate budget of 2,500,000 tokens and 240 minutes per arm.
+- The first launch passed the Mac nested-checkout state-root preflight. The current isolated Codex child then received `401 API_KEY_REQUIRED` from the configured custom provider; Graph recorded `PLANNER_PROCESS_FAILURE`, baseline could not produce a structured result, and neither arm reported backend token usage.
+- The pre-fix run wrote two invalid repetitions before it was manually stopped. Those records are retained in a private archive outside the repository; the public-safe operational index reports 3 blocked Graph Run records, 0 invalid archive records, and `claim_ready=false`.
+- Added paired-harness classification and regressions: an infrastructure-invalid pair is persisted and stops later repetitions, while a measured `negative_result` is retained and later repetitions continue. Final review also made scorer-only token/time budgets, pair identities, finding validation, regression evidence, and timing fail closed. The focused current harness result is now `npm run test:eval` 65/65; the five-pair effectiveness claim remains unmade pending a valid authorized provider configuration.
+
+## 2026-08-31 final candidate verification (historical local-preparation checkpoint)
+
+- The published `0.3.1` release was the comparison baseline; all results in this section applied to the then-unreleased `0.3.2` dirty checkout.
+- Fresh full suite: `npm test` exit 0; 302 total, 296 passed, 6 skipped, 0 failed.
+- Fresh targeted suites: `npm run test:archive` 4/4, `npm run test:package-policy` 3/3, and `npm run test:eval` 65/65.
+- Final code review reproduced and fixed an archive privacy edge case: a symlinked intermediate summary directory could expose an external file's size/hash. The focused regression and independent reproduction now reject it with `present=false`.
+- Candidate package gates: `npm run validate` 72/72, `npm run validate:package` 67 files / 17 shipped `.mjs` / 0 denied paths, `npm run test:package-smoke` pass with Mac `doctor=ready`, and `npm run release:check` `ready` for `0.3.2` (only the documented 0.x warning). All 56 source `.mjs` syntax checks, pinned Go 1.27.0 darwin-arm64 build/vet/test, repeated tarball identity, private-content scan, and `git diff --check` pass; no remote release action is implied by local green checks.
+- After all packaged documentation was finalized, the repeated candidate tarball is `graph-engineering-0.3.2.tgz`, 67 files, SHA-256 `c82da2d8d59a89197514f9afe64090bfd4c9389df12b824e9f02b53d2c180ed0`, npm shasum `b05fad51721c5ee452d32d3525edb6044f2eb945`, and integrity `sha512-QrYDSQt20dJjConzJ2NqutAUn7fL3SQQXQ2Ra00eU7814n8EnacjBk+kymC0qJNWTrIcMBwE0vbEIqh5pJIUsw==`; `npm audit --omit=dev --json` reports `ENOLOCK` because no lockfile is tracked.
+- The published `0.3.1` tarball matches its registry shasum and differs from the candidate package only in documentation and `package.json`. An isolated npm/Skill installer round trip `0.3.1 -> 0.3.2 -> 0.3.1` passes, including installed-file equality, CLI `help`, and candidate no-state `preview`.
+- Public CI run `33307995878` passed for committed `HEAD=87d0c40`, but the dirty `0.3.2` candidate has no corresponding remote CI or release identity. The published baseline evidence remains `0.3.1`/run `33307211330`.
+- GitHub CLI authentication is active, while `npm whoami` returns `E401 Unauthorized`; NPM publication is a waiting gate and was not attempted.
+- Final point-in-time verdict: local implementation review has no unresolved P0/P1 and is ready for an authorized commit; Final Quality Audit remains `BLOCK` and Release Readiness remains `NO-GO`/`WAITING_GATE` until candidate-commit CI, NPM authentication, and a named monitoring/rollback trigger are evidenced.
 
 ## 2026-08-30 public CI correction
 

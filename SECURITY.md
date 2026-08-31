@@ -2,7 +2,7 @@
 
 ## Supported Version
 
-Security fixes currently target the latest `0.2.x` source. Older local installations should be upgraded only after active Graph runners have stopped.
+Security fixes currently target the latest `0.3.x` source. Older local installations should be upgraded only after active Graph runners have stopped.
 
 ## Reporting A Vulnerability
 

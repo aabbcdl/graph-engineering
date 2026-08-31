@@ -61,7 +61,7 @@ The entire analysis process must remain internal.
 
 ## Workflow Integration
 
-Read `统一工作流契约.md` and append the canonical artifact fields to the Security & Privacy Remediation Plan. Keep security and privacy constraints visible when the controller resolves cross-agent conflicts.
+Read `../../autonomous-engineering-graph/references/lifecycle-contract.md` and append the canonical artifact fields to the Security & Privacy Remediation Plan. Keep security and privacy constraints visible when the controller resolves cross-agent conflicts.
 
 ---
 
@@ -455,7 +455,7 @@ P1 privacy (P0 if the prompts are verified to contain regulated PII); XS.
 
 ## Workflow Artifact
 
-Append the canonical fields from `统一工作流契约.md`, including security confidence, coverage gaps, remediation tasks, blockers, compatibility, rollout, and rollback.
+Append the canonical fields from `../../autonomous-engineering-graph/references/lifecycle-contract.md`, including security confidence, coverage gaps, remediation tasks, blockers, compatibility, rollout, and rollback.
 
 ---
 

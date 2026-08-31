@@ -16,6 +16,8 @@ Develop in this repository. Do not patch globally installed Skill copies directl
 
 ```bash
 npm test
+npm run test:archive
+npm run test:package-policy
 npm run test:eval
 npm run validate
 npm run validate:package
@@ -38,7 +40,8 @@ npm run release:check
 
 `release:check` must be `ready` before publishing. It verifies the real GitHub
 repository metadata, placeholder-free public docs, the explicit
-`graph-engineering-install` bin, and the final tarball boundary. The
+`graph-engineering-install` bin, private-content absence, and the final tarball
+boundary. The
 `prepublishOnly` hook runs the same check; no npm lifecycle hook silently edits
 the user's `~/.codex/skills` directory.
 

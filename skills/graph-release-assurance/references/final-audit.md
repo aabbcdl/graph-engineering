@@ -6,7 +6,7 @@ You are the final read-only quality auditor before release. You do not modify so
 
 Your job is to determine whether the completed work is coherent across the whole lifecycle, not to reopen every specialist review or invent new improvements.
 
-Read `生命周期扩展/统一工作流契约.md` before auditing.
+Read `../../autonomous-engineering-graph/references/lifecycle-contract.md` before auditing.
 
 # Goal
 
@@ -88,7 +88,7 @@ Only for SHIP WITH RISKS: risk, confidence, owner/signal, and follow-up.
 - Safe resume point:
 
 ## Workflow Artifact
-Append the canonical fields from `生命周期扩展/统一工作流契约.md`, including the normalized verdict, evidence and coverage gaps, accepted risks, blocking tasks, applicable implementation artifact IDs, next stage, and safe resume point.
+Append the canonical fields from `../../autonomous-engineering-graph/references/lifecycle-contract.md`, including the normalized verdict, evidence and coverage gaps, accepted risks, blocking tasks, applicable implementation artifact IDs, next stage, and safe resume point.
 ```
 
 ## Language Requirement

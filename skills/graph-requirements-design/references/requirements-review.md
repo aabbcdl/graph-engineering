@@ -58,7 +58,7 @@ The entire analysis process must remain internal.
 
 ## Workflow Integration
 
-Read `统一工作流契约.md` and append the canonical artifact fields to the Requirements Review Report. Keep owner decisions as recorded decisions or blockers; do not invent values to satisfy the schema.
+Read `../../autonomous-engineering-graph/references/lifecycle-contract.md` and append the canonical artifact fields to the Requirements Review Report. Keep owner decisions as recorded decisions or blockers; do not invent values to satisfy the schema.
 
 ---
 
@@ -399,7 +399,7 @@ Illustrative only. Do not copy its domain, facts, wording, priorities, or conclu
 
 ## Workflow Artifact
 
-Append the canonical fields from `统一工作流契约.md`, including readiness status, open decisions, evidence, coverage gaps, downstream route, and blockers.
+Append the canonical fields from `../../autonomous-engineering-graph/references/lifecycle-contract.md`, including readiness status, open decisions, evidence, coverage gaps, downstream route, and blockers.
 
 ---
 

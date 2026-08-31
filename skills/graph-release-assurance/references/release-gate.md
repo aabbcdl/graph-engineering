@@ -56,7 +56,7 @@ The entire analysis process must remain internal.
 
 ## Workflow Integration
 
-Read `统一工作流契约.md` before rendering a release verdict.
+Read `../../autonomous-engineering-graph/references/lifecycle-contract.md` before rendering a release verdict.
 
 - In `NORMAL_RELEASE` mode, consume the Final Quality Audit artifact. A missing audit or unknown gate-critical field is not a pass.
 - In `EMERGENCY_MITIGATION` mode, consume the Root Cause Analysis artifact and Incident Mitigation Plan. This mode is allowed only for a previously verified build rollback or a reversible runtime flag/config change. It cannot approve new code, a new build, a data migration, or an irreversible external action.
@@ -330,7 +330,7 @@ Illustrative only. Do not copy its facts, versions, or conclusions. Use it only 
 
 ## Workflow Artifact
 
-Append the canonical fields from `统一工作流契约.md`, including the release verdict, gate mode, gate evidence, blocking issues, rollback status, monitoring signal, and next-stage state. Use `READY_FOR_AUTHORIZED_ACTION` only for GO, `WAITING_GATE` for GO WITH CONDITIONS, and the owning remediation stage or `WAITING_GATE` for NO-GO.
+Append the canonical fields from `../../autonomous-engineering-graph/references/lifecycle-contract.md`, including the release verdict, gate mode, gate evidence, blocking issues, rollback status, monitoring signal, and next-stage state. Use `READY_FOR_AUTHORIZED_ACTION` only for GO, `WAITING_GATE` for GO WITH CONDITIONS, and the owning remediation stage or `WAITING_GATE` for NO-GO.
 
 ---
 

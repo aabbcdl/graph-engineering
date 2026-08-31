@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   evaluationArguments,
+  evaluationStateRoot,
   finishEvaluation,
   graphRunnerArguments,
   isRepositoryFinding,
@@ -22,7 +23,7 @@ const runner = path.join(projectRoot, "skills", "autonomous-engineering-graph", 
 // correction budget as the production runner. This measures completion rather
 // than making the evaluation fail solely on a recoverable final-review gap.
 const maxCorrections = args.tokenBudget >= 3_500_000 ? "3" : "2";
-const stateRoot = path.join(path.dirname(args.output), "graph-state");
+const stateRoot = evaluationStateRoot({ output: args.output, workspace: args.workspace });
 const execution = spawnSync(
   process.execPath,
   graphRunnerArguments({

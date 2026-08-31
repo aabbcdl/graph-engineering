@@ -250,6 +250,8 @@ test("CI provisions the pinned Go toolchain before evaluation tests", async () =
 test("CI enforces release documents, package policy, and the committed diff", async () => {
   const workflow = await readFile(path.resolve(TEST_DIR, "..", "..", ".github", "workflows", "ci.yml"), "utf8");
   assert.match(workflow, /os:\s*\[ubuntu-latest, macos-14\]/);
+  const contractJob = workflow.slice(workflow.indexOf("  contract-and-package:"));
+  assert.match(contractJob, /uses: actions\/checkout@v4\s+with:\s+fetch-depth:\s*2/);
   for (const command of [
     "npm run test:package-policy",
     "npm run validate:package",

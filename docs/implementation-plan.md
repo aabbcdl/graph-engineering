@@ -29,7 +29,7 @@
 - Windows 目前只完成部分适配，路径、进程隔离和真实 Agent sandbox 仍可能不稳定；protected real-agent smoke 仍是独立可选外部门，不是 Mac 用户的使用前置条件。Windows 不在本轮 Mac 发布 CI 矩阵内，没有真实 Windows 机器证据时继续标记为 `UNKNOWN`/`waiting_environment`。
 - Graph 相对单 Agent 的效果仍不作结论；必须由同一 fixture、goal、model、effort、budget 的至少五组唯一 repetition paired evaluation 证明。
 - 用户此前运行真实仓库的口头结果不替代可复核 Run artifact；本轮已从本机临时状态中定位并独立检查 4 条 GoFish/KopiAI Run，生成了不含源码、路径和报告正文的私有脱敏索引。它仍只是 operational feedback，不是发布或效果证据。
-- 用户已确认 Codex / `gpt-5.6-terra` / `medium` 及 2,500,000 token、240 分钟的每臂硬预算。首轮真实启动通过了状态目录隔离检查，但当前 custom provider 返回 `401 API_KEY_REQUIRED`，两臂均未形成可比较结果；无效运行已在 checkout 外私有归档，不能升级为效果结论。
+- 用户已确认 Codex / `medium` 及 2,500,000 token、240 分钟的每臂硬预算，并于 2026-09-01 将本轮精确模型改为 `gpt-5.6-sol`。使用旧模型选择的首轮真实启动通过了状态目录隔离检查，但当时 custom provider 返回 `401 API_KEY_REQUIRED`，两臂均未形成可比较结果；无效运行已在 checkout 外私有归档，不能升级为效果结论。
 
 本节覆盖旧阶段记录中的“未发布”“未同步”“CI 未观察”等历史状态；旧日期下的结果保留作为审计轨迹，不再作为当前结论。
 

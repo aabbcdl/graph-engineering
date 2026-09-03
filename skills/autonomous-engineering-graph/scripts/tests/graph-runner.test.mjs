@@ -29,6 +29,7 @@ import {
   clearResolvedAssuranceBlocker,
   clearResolvedBudgetBlocker,
   configureAssurance,
+  configuredCodexSettings,
   recordAgentSandboxProbe,
   recordClaudeSandboxProbe,
   commandExecutables,
@@ -98,6 +99,7 @@ import {
   sourceGitProvenance,
   stateRootUsageSummary,
   shouldRetrySupervisionRecheck,
+  spawnCodex,
   transientExecutionFailure,
   tokenBudgetGuard,
   unsatisfiedCheckIds,
@@ -131,14 +133,33 @@ const SLOW_INTEGRATION_TIMEOUT = 120_000;
 const ACTIVE_MODEL_START_TIMEOUT = 15_000;
 const TEST_QUEUE_ROOT = path.join(os.tmpdir(), `aeg-test-model-queue-${process.pid}`);
 const TEST_CONTROL_ROOT = path.join(os.tmpdir(), `aeg-test-runtime-control-${process.pid}`);
+const TEST_CODEX_HOME = await mkdtemp(path.join(os.tmpdir(), "aeg-test-codex-home-"));
+const TEST_HOST_ENV_KEYS = [
+  "CODEX_HOME",
+  "AEG_CHILD_ENV_KEYS",
+  "AEG_CODEX_COMMAND_JSON",
+  "AEG_CLAUDE_COMMAND_JSON",
+  "AEG_FAKE_SCENARIO",
+  "AEG_FAKE_PLANNER_HOLD_MS",
+  "AEG_FAKE_REQUIRE_HARDENED_ARGS",
+  "CUSTOM_PROVIDER_API_KEY",
+];
+const TEST_HOST_ENV = Object.fromEntries(TEST_HOST_ENV_KEYS.map((key) => [key, process.env[key]]));
+process.env.CODEX_HOME = TEST_CODEX_HOME;
+for (const key of TEST_HOST_ENV_KEYS.slice(1)) delete process.env[key];
 process.env.AEG_MODEL_QUEUE_ROOT = TEST_QUEUE_ROOT;
 process.env.AEG_TEST_MODE = "1";
 process.env.AEG_TEST_RUNTIME_CONTROL_ROOT = TEST_CONTROL_ROOT;
 process.env.AEG_WORKSPACE_MODE = "live";
 process.env.AEG_DISABLE_NOTIFICATIONS = "1";
 after(async () => {
+  for (const key of TEST_HOST_ENV_KEYS) {
+    if (TEST_HOST_ENV[key] === undefined) delete process.env[key];
+    else process.env[key] = TEST_HOST_ENV[key];
+  }
   await rm(TEST_QUEUE_ROOT, { recursive: true, force: true });
   await rm(TEST_CONTROL_ROOT, { recursive: true, force: true });
+  await rm(TEST_CODEX_HOME, { recursive: true, force: true });
 });
 
 function contentHash(value) {
@@ -630,6 +651,61 @@ test("review node cap is explicit, bounded, and preserved in a normalized plan",
   assert.equal(normalizePlannerResult({ review_nodes: [] }, catalog, "audit", 99).review_nodes.length <= 6, true);
 });
 
+test("specialist skill identity wins over incidental focus keywords during domain classification", () => {
+  const catalog = [
+    { name: "graph-engineering-quality", description: "engineering review", origin: "project" },
+    { name: "graph-product-quality", description: "product review", origin: "project" },
+    { name: "graph-experience-quality", description: "experience review", origin: "project" },
+    { name: "graph-security-privacy", description: "security review", origin: "project" },
+  ];
+  const plan = normalizePlannerResult(
+    {
+      task_summary: "Audit the fixture",
+      mode: "audit",
+      review_nodes: [
+        {
+          id: "review-engineering-quality",
+          title: "Engineering and Concurrency Review",
+          focus: "Review implementation packages and release compatibility.",
+          skills: ["graph-engineering-quality"],
+        },
+        {
+          id: "review-product-quality",
+          title: "Product Quality Review",
+          focus: "Review package adoption and activation.",
+          skills: ["graph-product-quality"],
+        },
+        {
+          id: "review-experience-quality",
+          title: "Experience Quality Review",
+          focus: "Review responsive package rendering.",
+          skills: ["graph-experience-quality"],
+        },
+        {
+          id: "review-security-privacy",
+          title: "Security and Privacy Review",
+          focus: "Review package token handling.",
+          skills: ["graph-security-privacy"],
+        },
+      ],
+      required_checks: [{ id: "tests", description: "Run tests", command: "npm test" }],
+    },
+    catalog,
+    "Audit the fixture",
+    4,
+    4,
+  );
+  assert.deepEqual(plan.coverage.required_domains, ["engineering", "product", "experience", "security"]);
+  assert.deepEqual(plan.coverage.selected_domains, ["engineering", "product", "experience", "security"]);
+  assert.deepEqual(plan.coverage.omitted_domains, []);
+  assert.deepEqual(plan.review_nodes.map((review) => review.id), [
+    "review-engineering-quality",
+    "review-product-quality",
+    "review-experience-quality",
+    "review-security-privacy",
+  ]);
+});
+
 test("temporary failure detection ignores a false timeout marker", () => {
   assert.equal(
     transientExecutionFailure({
@@ -692,6 +768,7 @@ test("a definition update stops without retry and the same run resumes with a re
   const environment = {
     ...process.env,
     AEG_CODEX_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
+    AEG_CLAUDE_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
     AEG_FAKE_SCENARIO: "happy",
     AEG_FAKE_PLANNER_HOLD_MS: "500",
   };
@@ -782,6 +859,13 @@ test("a permanent backend rejection is never treated as a temporary failure", ()
 
   const bareForbidden = { execution: { timed_out: false, stderr: "unexpected status 403 Forbidden" } };
   assert.equal(permanentBackendFailure(bareForbidden).reason, "http_403");
+
+  const configurationError = new Error(
+    "Codex provider uses experimental_bearer_token, which is not projected into isolated children",
+  );
+  configurationError.code = "CODEX_PROVIDER_AUTH_CONFIGURATION_REQUIRED";
+  assert.equal(transientExecutionFailure(configurationError), false);
+  assert.equal(permanentBackendFailure(configurationError).reason, "credentials");
 });
 
 test("temporary failure detection does not fire on incidental three-digit numbers", () => {
@@ -2706,6 +2790,7 @@ test("planner source mutation is blocked before a graph is compiled", async (t) 
       env: {
         ...process.env,
         AEG_CODEX_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
+        AEG_CLAUDE_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
         AEG_EXECUTION_ROOT: path.join(root, "isolated"),
         AEG_FAKE_SCENARIO: "planner-source-mutation",
       },
@@ -2908,8 +2993,8 @@ test("implementation supervision rechecks retain the original implementation art
     const nodeDir = path.join(runDir, "nodes", id);
     await mkdir(nodeDir, { recursive: true });
     await atomicWriteJson(path.join(nodeDir, "result.json"), {
-      status: "completed",
-      gate: "not_applicable",
+      status: id === "implementation" ? "needs_retry" : "completed",
+      gate: id === "implementation" ? "fail" : "not_applicable",
       summary,
       evidence: [],
       findings: [],
@@ -2941,12 +3026,107 @@ test("implementation supervision rechecks retain the original implementation art
         "implementation-supervision": { kind: "supervision" },
         "correction-r1": { kind: "correction" },
       },
-      supervision_state: {},
+      supervision_state: {
+        implementation: {
+          phase: "rechecking",
+          artifact_node_id: "correction-r1",
+          node_id: "implementation-supervision",
+        },
+      },
     },
   ));
 
   assert.deepEqual(context.map((entry) => entry.node), ["correction-r1", "implementation"]);
+  assert.equal(context[0].artifact_context.role, "current_corrected_artifact");
+  assert.equal(context[0].artifact_context.status_is_authoritative, true);
+  assert.equal(context[1].artifact_context.role, "historical_lineage_reference");
+  assert.equal(context[1].artifact_context.status_is_authoritative, false);
+  assert.match(context[1].artifact_context.status_semantics, /historical lineage only/i);
+  assert.equal(context[1].result.status, "needs_retry");
   assert.equal(context.find((entry) => entry.node === "implementation").result.files_changed[0], "apps/server/src/fix.ts");
+});
+
+test("implementation supervision rechecks preserve complete current correction coverage", async (t) => {
+  const runDir = await temporaryDirectory(t);
+  const makeResult = (status, count, prefix) => ({
+    status,
+    gate: status === "completed" ? "pass" : "fail",
+    summary: `${prefix} artifact`,
+    evidence: Array.from({ length: count }, (_, index) => ({
+      claim: `${prefix} evidence ${index}`,
+      source: `${prefix}/evidence-${index}.txt`,
+      kind: "test",
+      finding_ids: [`${prefix}-finding-${index}`],
+    })),
+    findings: Array.from({ length: count }, (_, index) => ({
+      id: `${prefix}-finding-${index}`,
+      severity: "high",
+      title: `${prefix} finding ${index}`,
+      evidence: `${prefix} evidence ${index}`,
+      recommended_action: `${prefix} action ${index}`,
+      fingerprint: `${prefix}-fingerprint-${index}`,
+      related_finding_ids: [],
+      evidence_anchors: [`${prefix}/source-${index}.go:1`],
+      validation: "test_confirmed",
+      disposition: status === "completed" ? "fixed" : "discovered",
+    })),
+    blockers: [],
+    next_actions: Array.from({ length: count }, (_, index) => `${prefix} action ${index}`),
+    files_changed: Array.from({ length: count }, (_, index) => `${prefix}/file-${index}.go`),
+    checks: Array.from({ length: count }, (_, index) => ({
+      id: `${prefix}-check-${index}`,
+      status: status === "completed" ? "pass" : "fail",
+      evidence: `${prefix} check ${index}`,
+      command: null,
+      finding_ids: [`${prefix}-finding-${index}`],
+    })),
+  });
+  for (const [id, result] of [
+    ["correction-r1", makeResult("completed", 13, "correction")],
+    ["implementation", makeResult("needs_retry", 13, "implementation")],
+  ]) {
+    const nodeDir = path.join(runDir, "nodes", id);
+    await mkdir(nodeDir, { recursive: true });
+    await atomicWriteJson(path.join(nodeDir, "result.json"), result);
+    await atomicWriteJson(path.join(nodeDir, "proof.json"), {
+      process_exit_code: 0,
+      timed_out: false,
+      commands: [],
+      tool_calls: [],
+      errors: [],
+      supplied_skills: [],
+      observed_files_changed: result.files_changed,
+    });
+  }
+  const context = JSON.parse(await dependencyContext(
+    {
+      kind: "supervision",
+      stage: "implementation",
+      depends_on: ["correction-r1", "implementation-supervision"],
+    },
+    runDir,
+    {
+      plan: { required_checks: [] },
+      nodes: {
+        implementation: { kind: "implementation" },
+        "implementation-supervision": { kind: "supervision" },
+        "correction-r1": { kind: "correction" },
+      },
+      supervision_state: {
+        implementation: {
+          phase: "rechecking",
+          artifact_node_id: "correction-r1",
+          node_id: "implementation-supervision",
+        },
+      },
+    },
+  ));
+  const current = context.find((entry) => entry.node === "correction-r1");
+  assert.equal(current.result.findings.length, 13);
+  assert.equal(current.result.compaction.findings_omitted, 0);
+  assert.equal(current.result.current_artifact_coverage.finding_count, 13);
+  assert.equal(current.result.current_artifact_coverage.evidence_count, 13);
+  assert.deepEqual(current.result.current_artifact_coverage.check_ids.slice(0, 2), ["correction-check-0", "correction-check-1"]);
 });
 
 test("claude event streams yield command evidence and the structured result", () => {
@@ -3014,7 +3194,11 @@ test("agent backend and fallback survive a resume without being re-specified", (
 });
 
 test("isolated child configuration preserves an explicit model without user plugins", () => {
-  const args = isolatedCodexConfigArgs({ model: "fixture-model", reasoningEffort: "high" });
+  const args = isolatedCodexConfigArgs({
+    model: "fixture-model",
+    reasoningEffort: "high",
+    settings: { model_provider: null },
+  });
   assert.ok(args.includes("--ignore-user-config"));
   assert.deepEqual(args.slice(0, 3), ["--ignore-user-config", "--model", "fixture-model"]);
   assert.equal(args.some((value) => /plugins\.|mcp_servers\./.test(value)), false);
@@ -4049,6 +4233,47 @@ test("redaction removes credentials embedded in routing URLs", async () => {
   assert.match(output, /REDACTED_URL_CREDENTIAL/);
 });
 
+test("redaction removes values from explicitly projected custom environment keys", async () => {
+  const transform = new RedactingLineTransform(["CUSTOM_PROVIDER_VALUE"]);
+  let output = "";
+  transform.on("data", (chunk) => {
+    output += chunk.toString("utf8");
+  });
+  const previous = process.env.CUSTOM_PROVIDER_VALUE;
+  process.env.CUSTOM_PROVIDER_VALUE = "fixture-provider-secret";
+  try {
+    transform.end("provider response echoed fixture-provider-secret\n");
+    await finished(transform);
+  } finally {
+    if (previous === undefined) delete process.env.CUSTOM_PROVIDER_VALUE;
+    else process.env.CUSTOM_PROVIDER_VALUE = previous;
+  }
+  assert.doesNotMatch(output, /fixture-provider-secret/);
+  assert.match(output, /REDACTED_ENV_SECRET/);
+});
+
+test("redaction uses the startup environment snapshot and masks short projected values", async () => {
+  const previous = process.env.CUSTOM_PROVIDER_VALUE;
+  process.env.CUSTOM_PROVIDER_VALUE = "current-process-value";
+  const transform = new RedactingLineTransform(
+    ["CUSTOM_PROVIDER_VALUE"],
+    { CUSTOM_PROVIDER_VALUE: "q7" },
+  );
+  let output = "";
+  transform.on("data", (chunk) => {
+    output += chunk.toString("utf8");
+  });
+  try {
+    transform.end("provider echoed q7\n");
+    await finished(transform);
+  } finally {
+    if (previous === undefined) delete process.env.CUSTOM_PROVIDER_VALUE;
+    else process.env.CUSTOM_PROVIDER_VALUE = previous;
+  }
+  assert.doesNotMatch(output, /q7/);
+  assert.match(output, /REDACTED_ENV_SECRET/);
+});
+
 test("redaction preserves ordinary authorization prose and private-key search commands", async () => {
   const transform = new RedactingLineTransform();
   let output = "";
@@ -4100,6 +4325,398 @@ test("runtime control root is stable and does not follow a mutable runtime overr
     runtimeControlRoot({ environment: { AEG_RUNTIME_CONTROL_ROOT: path.join(os.tmpdir(), "wrong-root") } }),
     expected,
   );
+});
+
+test("isolated Codex configuration projects a custom provider env_key without exposing its value", () => {
+  const settings = {
+    model_provider: "custom",
+    provider_name: "custom",
+    provider_wire_api: "responses",
+    provider_requires_openai_auth: false,
+    provider_base_url: "https://gateway.example.invalid/v1",
+    provider_env_key: "SUB2API_API_KEY",
+  };
+  const sourceEnvironment = {
+    SUB2API_API_KEY: "fixture-provider-secret",
+    AEG_CHILD_ENV_KEYS: "SUB2API_API_KEY",
+  };
+  const args = isolatedCodexConfigArgs({ settings, sourceEnvironment });
+  assert.ok(args.includes('model_providers.custom.env_key="SUB2API_API_KEY"'));
+  assert.equal(args.some((value) => value.includes("fixture-provider-secret")), false);
+  const environment = childEnvironment({ sourceEnvironment });
+  assert.equal(environment.SUB2API_API_KEY, sourceEnvironment.SUB2API_API_KEY);
+});
+
+test("custom provider env_key fails closed unless its value is explicitly projected", () => {
+  const settings = {
+    model_provider: "custom",
+    provider_name: "custom",
+    provider_wire_api: "responses",
+    provider_requires_openai_auth: false,
+    provider_base_url: "https://gateway.example.invalid/v1",
+    provider_env_key: "SUB2API_API_KEY",
+  };
+  assert.throws(
+    () => isolatedCodexConfigArgs({ settings, sourceEnvironment: { SUB2API_API_KEY: "fixture-secret" } }),
+    /env_key SUB2API_API_KEY must be explicitly listed in AEG_CHILD_ENV_KEYS/,
+  );
+  assert.throws(
+    () => isolatedCodexConfigArgs({ settings, sourceEnvironment: { AEG_CHILD_ENV_KEYS: "SUB2API_API_KEY" } }),
+    /env_key SUB2API_API_KEY is not set in the parent environment/,
+  );
+  assert.throws(
+    () => isolatedCodexConfigArgs({
+      settings: { ...settings, provider_env_key: "NODE_OPTIONS" },
+      sourceEnvironment: { NODE_OPTIONS: "fixture", AEG_CHILD_ENV_KEYS: "NODE_OPTIONS" },
+    }),
+    /cannot project execution-control variable: NODE_OPTIONS/,
+  );
+});
+
+test("custom provider env_key rejects blank or null parent values", () => {
+  const settings = {
+    model_provider: "custom",
+    provider_name: "custom",
+    provider_wire_api: "responses",
+    provider_requires_openai_auth: false,
+    provider_base_url: "https://gateway.example.invalid/v1",
+    provider_env_key: "SUB2API_API_KEY",
+  };
+  for (const value of [" ", "\t", null]) {
+    assert.throws(
+      () => isolatedCodexConfigArgs({
+        settings,
+        sourceEnvironment: { SUB2API_API_KEY: value, AEG_CHILD_ENV_KEYS: "SUB2API_API_KEY" },
+      }),
+      (error) =>
+        error.code === "CODEX_PROVIDER_AUTH_CONFIGURATION_REQUIRED" &&
+        /env_key SUB2API_API_KEY is not set in the parent environment/.test(error.message),
+    );
+  }
+});
+
+test("a present but malformed Codex env_key cannot silently disable authentication", () => {
+  assert.throws(
+    () => isolatedCodexConfigArgs({
+      settings: {
+        model_provider: "custom",
+        provider_name: "custom",
+        provider_wire_api: "responses",
+        provider_requires_openai_auth: false,
+        provider_base_url: "https://gateway.example.invalid/v1",
+        provider_has_env_key: true,
+        provider_env_key: null,
+      },
+      sourceEnvironment: {},
+    }),
+    (error) =>
+      error.code === "CODEX_PROVIDER_AUTH_CONFIGURATION_REQUIRED" &&
+      /env_key is present but empty or not a valid environment name/.test(error.message),
+  );
+});
+
+test("Codex doctor fails closed when a provider env_key is not explicitly projected", async (t) => {
+  const directory = await temporaryDirectory(t);
+  const codexHome = path.join(directory, "codex-home");
+  await mkdir(codexHome, { recursive: true });
+  await writeFile(
+    path.join(codexHome, "config.toml"),
+    [
+      'model_provider = "custom"',
+      "",
+      "[model_providers.custom]",
+      'name = "custom"',
+      'wire_api = "responses"',
+      'requires_openai_auth = false',
+      'base_url = "https://gateway.example.invalid/v1"',
+      'env_key = "CUSTOM_PROVIDER_API_KEY"',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const environmentNames = ["CODEX_HOME", "AEG_CHILD_ENV_KEYS", "CUSTOM_PROVIDER_API_KEY", "AEG_CODEX_COMMAND_JSON", "AEG_FAKE_SCENARIO"];
+  const previous = Object.fromEntries(environmentNames.map((name) => [name, process.env[name]]));
+  const matrix = {
+    backend: "codex",
+    installed: { status: "PASS", value: "codex" },
+    invocable: { status: "PASS", value: "codex" },
+    "read-sandbox-verified": { status: "PASS", value: "platform-native" },
+    "write-sandbox-verified": { status: "PASS", value: "platform-native" },
+    "automatic-fallback-ready": { status: "PASS", value: "ready" },
+  };
+  try {
+    process.env.CODEX_HOME = codexHome;
+    process.env.CUSTOM_PROVIDER_API_KEY = "fixture-provider-secret";
+    delete process.env.AEG_CHILD_ENV_KEYS;
+    delete process.env.AEG_CODEX_COMMAND_JSON;
+    delete process.env.AEG_FAKE_SCENARIO;
+    let doctor = agentCapabilityDoctor({ backend: "codex", matrix, strict: true, testFixtureOverride: false });
+    assert.equal(doctor.status, "blocked");
+    assert.ok(doctor.gaps.some((gap) => gap.check === "capability:codex:provider-auth-configured"));
+    assert.match(doctor.unblock_condition, /AEG_CHILD_ENV_KEYS/);
+
+    process.env.AEG_CHILD_ENV_KEYS = "CUSTOM_PROVIDER_API_KEY";
+    doctor = agentCapabilityDoctor({ backend: "codex", matrix, strict: true, testFixtureOverride: false });
+    assert.equal(doctor.status, "ready");
+    assert.equal(
+      doctor.checks.find((check) => check.check === "capability:codex:provider-auth-configured").value,
+      "env_key:CUSTOM_PROVIDER_API_KEY",
+    );
+  } finally {
+    for (const name of environmentNames) {
+      if (previous[name] === undefined) delete process.env[name];
+      else process.env[name] = previous[name];
+    }
+  }
+});
+
+test("Codex doctor rejects legacy experimental_bearer_token configuration", async (t) => {
+  const directory = await temporaryDirectory(t);
+  const codexHome = path.join(directory, "codex-home");
+  await mkdir(codexHome, { recursive: true });
+  await writeFile(
+    path.join(codexHome, "config.toml"),
+    [
+      'model_provider = "custom"',
+      "",
+      "[model_providers.custom]",
+      'name = "custom"',
+      'wire_api = "responses"',
+      'requires_openai_auth = false',
+      'base_url = "https://gateway.example.invalid/v1"',
+      'env_key = "CUSTOM_PROVIDER_API_KEY"',
+      'experimental_bearer_token = "legacy-value"',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const previous = {
+    CODEX_HOME: process.env.CODEX_HOME,
+    AEG_CHILD_ENV_KEYS: process.env.AEG_CHILD_ENV_KEYS,
+    CUSTOM_PROVIDER_API_KEY: process.env.CUSTOM_PROVIDER_API_KEY,
+  };
+  const matrix = {
+    backend: "codex",
+    installed: { status: "PASS", value: "codex" },
+    invocable: { status: "PASS", value: "codex" },
+    "read-sandbox-verified": { status: "PASS", value: "platform-native" },
+    "write-sandbox-verified": { status: "PASS", value: "platform-native" },
+    "automatic-fallback-ready": { status: "PASS", value: "ready" },
+  };
+  try {
+    process.env.CODEX_HOME = codexHome;
+    process.env.AEG_CHILD_ENV_KEYS = "CUSTOM_PROVIDER_API_KEY";
+    process.env.CUSTOM_PROVIDER_API_KEY = "fixture-provider-secret";
+    const doctor = agentCapabilityDoctor({ backend: "codex", matrix, strict: true, testFixtureOverride: false });
+    assert.equal(doctor.status, "blocked");
+    const gap = doctor.gaps.find((item) => item.check === "capability:codex:provider-auth-configured");
+    assert.equal(gap.value, "legacy-bearer-token");
+    assert.match(gap.reason, /experimental_bearer_token/);
+  } finally {
+    if (previous.CODEX_HOME === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previous.CODEX_HOME;
+    if (previous.AEG_CHILD_ENV_KEYS === undefined) delete process.env.AEG_CHILD_ENV_KEYS;
+    else process.env.AEG_CHILD_ENV_KEYS = previous.AEG_CHILD_ENV_KEYS;
+    if (previous.CUSTOM_PROVIDER_API_KEY === undefined) delete process.env.CUSTOM_PROVIDER_API_KEY;
+    else process.env.CUSTOM_PROVIDER_API_KEY = previous.CUSTOM_PROVIDER_API_KEY;
+  }
+});
+
+test("legacy Codex bearer-token configuration is rejected for isolated real children", () => {
+  assert.throws(
+    () => isolatedCodexConfigArgs({
+      settings: {
+        model_provider: "custom",
+        provider_name: "custom",
+        provider_wire_api: "responses",
+        provider_requires_openai_auth: false,
+        provider_base_url: "https://gateway.example.invalid/v1",
+        provider_has_experimental_bearer_token: true,
+      },
+      sourceEnvironment: {},
+    }),
+    /experimental_bearer_token.*env_key.*AEG_CHILD_ENV_KEYS/,
+  );
+});
+
+test("legacy Codex bearer-token configuration is rejected even with an env_key", () => {
+  assert.throws(
+    () => isolatedCodexConfigArgs({
+      settings: {
+        model_provider: "custom",
+        provider_name: "custom",
+        provider_wire_api: "responses",
+        provider_requires_openai_auth: false,
+        provider_base_url: "https://gateway.example.invalid/v1",
+        provider_env_key: "CUSTOM_PROVIDER_API_KEY",
+        provider_has_experimental_bearer_token: true,
+      },
+      sourceEnvironment: {
+        CUSTOM_PROVIDER_API_KEY: "fixture-provider-secret",
+        AEG_CHILD_ENV_KEYS: "CUSTOM_PROVIDER_API_KEY",
+      },
+    }),
+    (error) =>
+      error.code === "CODEX_PROVIDER_AUTH_CONFIGURATION_REQUIRED" &&
+      /still declares experimental_bearer_token/.test(error.message),
+  );
+});
+
+test("spawnCodex rejects an unprojected provider before queue admission", async (t) => {
+  const directory = await temporaryDirectory(t);
+  const codexHome = path.join(directory, "codex-home");
+  const workspace = path.join(directory, "workspace");
+  const nodeDir = path.join(directory, "node");
+  await mkdir(codexHome, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await writeFile(
+    path.join(codexHome, "config.toml"),
+    [
+      'model_provider = "custom"',
+      "",
+      "[model_providers.custom]",
+      'name = "custom"',
+      'wire_api = "responses"',
+      'requires_openai_auth = false',
+      'base_url = "https://gateway.example.invalid/v1"',
+      'env_key = "CUSTOM_PROVIDER_VALUE"',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const previousHome = process.env.CODEX_HOME;
+  const previousKeys = process.env.AEG_CHILD_ENV_KEYS;
+  try {
+    process.env.CODEX_HOME = codexHome;
+    delete process.env.AEG_CHILD_ENV_KEYS;
+    await assert.rejects(
+      () => spawnCodex({
+        prompt: "fixture",
+        schema: path.join(directory, "unused-schema.json"),
+        nodeDir,
+        workspace,
+        sandbox: "workspace-write",
+        model: "fixture-model",
+        timeoutMinutes: 1,
+        queueWaitMinutes: 1,
+        isolatedCodexConfig: true,
+        backend: "codex",
+      }),
+      /env_key CUSTOM_PROVIDER_VALUE must be explicitly listed in AEG_CHILD_ENV_KEYS/,
+    );
+    await assert.rejects(
+      () => lstat(path.join(nodeDir, "attempts", "attempt-1", "model-queue.json")),
+      { code: "ENOENT" },
+    );
+    await assert.rejects(
+      () => lstat(path.join(nodeDir, "attempts", "attempt-1", ".raw-last-message.json")),
+      { code: "ENOENT" },
+    );
+  } finally {
+    if (previousHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousHome;
+    if (previousKeys === undefined) delete process.env.AEG_CHILD_ENV_KEYS;
+    else process.env.AEG_CHILD_ENV_KEYS = previousKeys;
+  }
+});
+
+test("spawnCodex carries an explicitly projected provider key through the isolated child", async (t) => {
+  const directory = await temporaryDirectory(t);
+  const codexHome = path.join(directory, "codex-home");
+  const workspace = path.join(directory, "workspace");
+  const nodeDir = path.join(directory, "node");
+  await mkdir(codexHome, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await writeFile(
+    path.join(codexHome, "config.toml"),
+    [
+      'model = "fixture-model"',
+      'model_provider = "custom"',
+      "",
+      "[model_providers.custom]",
+      'name = "custom"',
+      'wire_api = "responses"',
+      'requires_openai_auth = false',
+      'base_url = "https://gateway.example.invalid/v1"',
+      'env_key = "CUSTOM_PROVIDER_API_KEY"',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const environmentNames = [
+    "CODEX_HOME",
+    "AEG_CODEX_COMMAND_JSON",
+    "AEG_CHILD_ENV_KEYS",
+    "AEG_TEST_MODE",
+    "AEG_FAKE_REQUIRE_HARDENED_ARGS",
+    "AEG_FAKE_SCENARIO",
+    "CUSTOM_PROVIDER_API_KEY",
+  ];
+  const previous = Object.fromEntries(environmentNames.map((name) => [name, process.env[name]]));
+  try {
+    process.env.CODEX_HOME = codexHome;
+    process.env.AEG_CODEX_COMMAND_JSON = JSON.stringify([process.execPath, FAKE_CODEX]);
+    process.env.AEG_CHILD_ENV_KEYS = "CUSTOM_PROVIDER_API_KEY";
+    process.env.AEG_TEST_MODE = "1";
+    process.env.AEG_FAKE_REQUIRE_HARDENED_ARGS = "1";
+    process.env.AEG_FAKE_SCENARIO = "happy";
+    process.env.CUSTOM_PROVIDER_API_KEY = "fixture-provider-secret";
+    const result = await spawnCodex({
+      prompt: "You are the planner (planner). Inspect the fixture.",
+      schema: path.join(TEST_DIR, "..", "schemas", "planner-result.schema.json"),
+      nodeDir,
+      workspace,
+      sandbox: "workspace-write",
+      model: "fixture-model",
+      reasoningEffort: "medium",
+      timeoutMinutes: 1,
+      queueWaitMinutes: 1,
+      isolatedCodexConfig: true,
+      backend: "codex",
+      runId: "env-key-projection-test",
+      nodeId: "planner",
+      maxTokens: 1000,
+    });
+    assert.equal(result.exit_code, 0);
+    assert.ok(result.proof.usage);
+    assert.ok(result.child_environment_keys.includes("CUSTOM_PROVIDER_API_KEY"));
+    assert.equal(result.proof.errors.length, 0);
+    const events = await readFile(result.events_path, "utf8");
+    assert.equal(events.includes("fixture-provider-secret"), false);
+    assert.equal((await lstat(path.join(nodeDir, "attempts", "attempt-1", ".raw-last-message.json")).catch(() => null)), null);
+  } finally {
+    for (const name of environmentNames) {
+      if (previous[name] === undefined) delete process.env[name];
+      else process.env[name] = previous[name];
+    }
+  }
+});
+
+test("configured Codex settings retain provider env_key metadata but never bearer-token values", async (t) => {
+  const directory = await temporaryDirectory(t);
+  const configPath = path.join(directory, "config.toml");
+  await writeFile(
+    configPath,
+    [
+      '\uFEFFmodel_provider = "custom" # selected provider',
+      "",
+      "[model_providers.custom] # provider settings",
+      'name = "custom"',
+      'wire_api = "responses"',
+      'requires_openai_auth = false',
+      'base_url = "https://gateway.example.invalid/v1#fragment" # endpoint comment',
+      'env_key = "SUB2API_API_KEY" # projected key',
+      'experimental_bearer_token = "fixture-only-secret" # legacy field',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const settings = configuredCodexSettings(configPath);
+  assert.equal(settings.provider_has_env_key, true);
+  assert.equal(settings.provider_env_key, "SUB2API_API_KEY");
+  assert.equal(settings.provider_base_url, "https://gateway.example.invalid/v1#fragment");
+  assert.equal(settings.provider_has_experimental_bearer_token, true);
+  assert.equal(Object.hasOwn(settings, "provider_experimental_bearer_token"), false);
 });
 
 test("child environment projects provider credentials only through explicit named opt-in", () => {
@@ -5762,6 +6379,7 @@ test("an oversized selected Skill is rejected before the node model process star
       env: {
         ...process.env,
         AEG_CODEX_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
+        AEG_CLAUDE_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
         AEG_FAKE_SCENARIO: "happy",
       },
     },
@@ -6021,6 +6639,7 @@ test("review mode runs a read-only graph and never exports an applicable result"
       env: {
         ...process.env,
         AEG_CODEX_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
+        AEG_CLAUDE_COMMAND_JSON: JSON.stringify([process.execPath, FAKE_CODEX]),
         AEG_FAKE_SCENARIO: "happy",
       },
     },
@@ -8294,6 +8913,13 @@ test("stage supervisors can reject once, correct only their owning stage, and th
     Object.fromEntries(Object.entries(run.supervision_state).map(([stage, state]) => [stage, state.phase])),
     { planner: "passed", synthesis: "passed", implementation: "passed" },
   );
+  const implementationSupervisionInput = await readFile(
+    path.join(summary.run_dir, "nodes", "implementation-supervision-r1", "input.md"),
+    "utf8",
+  );
+  assert.match(implementationSupervisionInput, /authoritative current artifact is correction-r1/i);
+  assert.match(implementationSupervisionInput, /historical lineage/i);
+  assert.match(implementationSupervisionInput, /prior status \(including needs_retry\).*must not be treated as the current stage decision/i);
   const synthesisCorrectionInput = await readFile(
     path.join(summary.run_dir, "nodes", "synthesis-correction-r1", "input.md"),
     "utf8",

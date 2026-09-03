@@ -129,7 +129,7 @@ Repository tests exercise the harness with `evals/tests/fake-arm.mjs`; they neve
 SHA-256 `24fa2993897318991d9d8db6d4be5806f4e02a2b5fcdae1f20bf3431e21a3754`,
 and binds the truth SHA-256 declared in the manifest. Both adapters are the
 Codex-backed Graph and single-agent workflows, and the manifest currently
-declares model `gpt-5.6-terra` at `medium` reasoning effort.
+declares model `gpt-5.6-sol` at `medium` reasoning effort.
 
 The pilot has five alternating repetitions, so it can start up to ten real
 model arm runs. Each arm is bounded by the declared 2,500,000-token aggregate
@@ -145,14 +145,16 @@ npm run eval:score -- \
   --output evals/results/run-001/report.json
 ```
 
-The owner confirmed the pilot choice and budget on 2026-08-31. The first real
-launch passed the Mac state-root isolation preflight, then both Codex arms were
-rejected by the configured custom provider with `401 API_KEY_REQUIRED`; neither
-arm reported backend token usage, so the pair was infrastructure-invalid. The
-incomplete run is retained outside the checkout for operational debugging and
-cannot replace the five bound comparable pairs. The harness now persists an
-infrastructure-invalid pair and stops before launching a later repetition;
-legitimate measured negative results remain eligible for later repetitions.
+The owner confirmed the pilot budget on 2026-08-31 and changed the exact model
+to `gpt-5.6-sol` on 2026-09-01. The first real launch, using the earlier model
+selection, passed the Mac state-root isolation preflight, then both Codex arms
+were rejected by the configured custom provider with `401 API_KEY_REQUIRED`;
+neither arm reported backend token usage, so the pair was
+infrastructure-invalid. The incomplete run is retained outside the checkout
+for operational debugging and cannot replace the five bound comparable pairs.
+The harness now persists an infrastructure-invalid pair and stops before
+launching a later repetition; legitimate measured negative results remain
+eligible for later repetitions.
 
 ## Metrics
 

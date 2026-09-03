@@ -94,7 +94,11 @@ Provider and proxy endpoints cross the child boundary automatically only when
 their URL contains no userinfo or sensitive credential query. An endpoint with
 embedded credentials requires its exact environment name in
 `AEG_CHILD_ENV_KEYS`; dedicated API-key variables remain the preferred form.
-Evidence redaction removes both URL userinfo and sensitive query values.
+Codex custom providers use `model_providers.<id>.env_key` for the same explicit
+credential projection. A real isolated child rejects any declared
+`experimental_bearer_token` and never copies it. Evidence redaction removes both
+URL userinfo and sensitive query values; provider values never enter child argv
+or recorded attempt metadata.
 
 Workspace preflight selects and records locked dependency and browser preparation
 commands, but does not execute repository-selected package managers or a

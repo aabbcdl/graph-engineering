@@ -2050,14 +2050,38 @@ function chooseFallbackSkill(catalog, patterns) {
   return catalog.find((skill) => patterns.some((pattern) => pattern.test(skill.name)))?.name;
 }
 
+const REVIEW_SKILL_DOMAINS = new Map([
+  ["graph-engineering-quality", "engineering"],
+  ["graph-product-quality", "product"],
+  ["graph-experience-quality", "experience"],
+  ["graph-security-privacy", "security"],
+  ["graph-requirements-design", "requirements"],
+  ["graph-incident-analysis", "reliability"],
+  ["graph-release-assurance", "release"],
+]);
+
 function reviewDomainId(review) {
-  const haystack = `${review?.id || ""} ${review?.title || ""} ${review?.focus || ""} ${(review?.skills || []).join(" ")}`.toLowerCase();
-  if (/security|privacy|auth|token|secret/.test(haystack)) return "security";
-  if (/requirement|design/.test(haystack)) return "requirements";
-  if (/product|business|monet|activation/.test(haystack)) return "product";
-  if (/experience|ux|ui|access|responsive|render|a11y/.test(haystack)) return "experience";
-  if (/release|deploy|packag/.test(haystack)) return "release";
-  if (/incident|reliab|outage|root.cause/.test(haystack)) return "reliability";
+  // A selected specialist is an authoritative domain signal. Inspect it
+  // before free-text keywords, where ordinary terms such as "package" can
+  // otherwise misclassify an engineering review as release work.
+  for (const skill of review?.skills || []) {
+    const domain = REVIEW_SKILL_DOMAINS.get(String(skill).replace(/^\$/, "").toLowerCase());
+    if (domain) return domain;
+  }
+  const identity = `${review?.id || ""} ${review?.title || ""}`.toLowerCase();
+  if (/security|privacy|auth|token|secret/.test(identity)) return "security";
+  if (/requirement|design/.test(identity)) return "requirements";
+  if (/product|business|monet|activation/.test(identity)) return "product";
+  if (/experience|ux|ui|access|responsive|render|a11y/.test(identity)) return "experience";
+  if (/release|deploy|publish|packag/.test(identity)) return "release";
+  if (/incident|reliab|outage|root.cause/.test(identity)) return "reliability";
+  const focus = String(review?.focus || "").toLowerCase();
+  if (/security|privacy|auth|token|secret/.test(focus)) return "security";
+  if (/requirement|design/.test(focus)) return "requirements";
+  if (/product|business|monet|activation/.test(focus)) return "product";
+  if (/experience|ux|ui|access|responsive|render|a11y/.test(focus)) return "experience";
+  if (/release|deploy|publish|packag/.test(focus)) return "release";
+  if (/incident|reliab|outage|root.cause/.test(focus)) return "reliability";
   return "engineering";
 }
 
@@ -4014,6 +4038,52 @@ function capabilityChecks(matrix) {
   }));
 }
 
+function codexProviderAuthCapability(sourceEnvironment = process.env) {
+  let settings;
+  try {
+    settings = configuredCodexSettings();
+  } catch (error) {
+    return {
+      status: "FAIL",
+      value: "invalid",
+      reason: redactEvidence(error.message || error),
+    };
+  }
+  if (!settings.model_provider) {
+    return { status: "PASS", value: "not-configured" };
+  }
+  if (settings.provider_has_experimental_bearer_token === true) {
+    return {
+      status: "FAIL",
+      value: "legacy-bearer-token",
+      reason: "Codex provider declares experimental_bearer_token; migrate to an environment-backed env_key.",
+    };
+  }
+  if (settings.provider_has_env_key === true && !String(settings.provider_env_key || "").trim()) {
+    return {
+      status: "FAIL",
+      value: "invalid-env-key",
+      reason: "Codex provider env_key is present but empty; configure a non-empty dedicated environment variable.",
+    };
+  }
+  try {
+    const providerKey = settings.provider_has_env_key === true
+      ? providerEnvironmentKey(settings.provider_env_key, sourceEnvironment)
+      : null;
+    const endpointKey = credentialBearingProviderEnvironmentKey(settings.provider_base_url, sourceEnvironment);
+    return {
+      status: "PASS",
+      value: providerKey ? `env_key:${providerKey}` : endpointKey ? `endpoint:${endpointKey}` : "configured",
+    };
+  } catch (error) {
+    return {
+      status: "FAIL",
+      value: "unavailable",
+      reason: redactEvidence(error.message || error),
+    };
+  }
+}
+
 function agentCapabilityDoctor({
   backend = DEFAULT_AGENT_BACKEND,
   workspace = process.cwd(),
@@ -4027,15 +4097,26 @@ function agentCapabilityDoctor({
     fallbackEnabled,
   });
   const checks = capabilityChecks(selected);
+  if ((selected.backend || backend) === "codex") {
+    const provider = codexProviderAuthCapability();
+    checks.push({
+      check: "capability:codex:provider-auth-configured",
+      status: provider.status.toLowerCase(),
+      value: provider.value,
+      ...(provider.reason ? { reason: provider.reason } : {}),
+    });
+  }
   const requiredDimensions = new Set([
     "installed",
     "invocable",
     "read-sandbox-verified",
     "write-sandbox-verified",
   ]);
+  if ((selected.backend || backend) === "codex") requiredDimensions.add("provider-auth-configured");
   const gaps = checks.filter((check) => requiredDimensions.has(String(check.check).split(":").at(-1)) && check.status !== "pass");
   const overridden = testFixtureOverride === true && controlledTestFixtureBinding(process.env, selected.backend || backend);
   const ready = !strict || overridden || gaps.length === 0;
+  const providerGap = gaps.find((gap) => gap.check.endsWith(":provider-auth-configured"));
   return {
     version: 1,
     backend: selected.backend || backend,
@@ -4047,6 +4128,8 @@ function agentCapabilityDoctor({
     capability_record: selected.capability_record || null,
     unblock_condition: ready || overridden
       ? null
+      : providerGap
+        ? "Configure the Codex provider env_key and explicitly project its non-empty environment variable through AEG_CHILD_ENV_KEYS, then retry this exact command or Run."
       : "Run the current backend read-only and workspace-write Windows smoke probes, then retry this exact command or Run.",
   };
 }
@@ -4060,9 +4143,52 @@ function fallbackBackendOrder(primary, workspace = process.cwd()) {
   );
 }
 
+function tomlWithoutComment(value) {
+  const source = String(value ?? "");
+  let quote = null;
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote === '"') {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === '"') {
+        quote = null;
+      }
+      continue;
+    }
+    if (quote === "'") {
+      if (character === "'") quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === "#") return source.slice(0, index);
+  }
+  return source;
+}
+
+function tomlLine(value) {
+  return tomlWithoutComment(value).replace(/^\uFEFF/, "").trim();
+}
+
+function tomlSection(line) {
+  const sectionMatch = tomlLine(line).match(/^\[([^\[\]]+)\]$/);
+  return sectionMatch ? sectionMatch[1].trim() : null;
+}
+
+function tomlAssignment(line) {
+  const fieldMatch = tomlLine(line).match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+  return fieldMatch ? { field: fieldMatch[1], value: fieldMatch[2] } : null;
+}
+
 function tomlScalar(value) {
   if (value === undefined || value === null) return null;
-  const text = String(value).trim().replace(/\s+#.*$/, "");
+  const text = tomlLine(value);
   if (/^"(?:\\.|[^"])*"$/.test(text)) {
     try {
       return JSON.parse(text);
@@ -4079,15 +4205,14 @@ function tomlScalar(value) {
 function readTomlField(source, section, field) {
   let currentSection = null;
   for (const rawLine of String(source || "").split(/\r?\n/)) {
-    const line = rawLine.trim();
-    const sectionMatch = line.match(/^\[([^\]]+)\]$/);
-    if (sectionMatch) {
-      currentSection = sectionMatch[1].trim();
+    const sectionName = tomlSection(rawLine);
+    if (sectionName) {
+      currentSection = sectionName;
       continue;
     }
     if (currentSection !== section) continue;
-    const fieldMatch = line.match(new RegExp(`^${field}\\s*=\\s*(.+)$`));
-    if (fieldMatch) return tomlScalar(fieldMatch[1]);
+    const assignment = tomlAssignment(rawLine);
+    if (assignment?.field === field) return tomlScalar(assignment.value);
   }
   return null;
 }
@@ -4095,17 +4220,36 @@ function readTomlField(source, section, field) {
 function readTopLevelTomlField(source, field) {
   let currentSection = null;
   for (const rawLine of String(source || "").split(/\r?\n/)) {
-    const line = rawLine.trim();
-    const sectionMatch = line.match(/^\[([^\]]+)\]$/);
-    if (sectionMatch) {
-      currentSection = sectionMatch[1].trim();
+    const sectionName = tomlSection(rawLine);
+    if (sectionName) {
+      currentSection = sectionName;
       continue;
     }
     if (currentSection !== null) continue;
-    const fieldMatch = line.match(new RegExp(`^${field}\\s*=\\s*(.+)$`));
-    if (fieldMatch) return tomlScalar(fieldMatch[1]);
+    const assignment = tomlAssignment(rawLine);
+    if (assignment?.field === field) return tomlScalar(assignment.value);
   }
   return null;
+}
+
+function tomlFieldPresent(source, section, field) {
+  let currentSection = null;
+  for (const rawLine of String(source || "").split(/\r?\n/)) {
+    const sectionName = tomlSection(rawLine);
+    if (sectionName) {
+      currentSection = sectionName;
+      continue;
+    }
+    if (currentSection !== section) continue;
+    if (tomlAssignment(rawLine)?.field === field) return true;
+  }
+  return false;
+}
+
+function codexProviderCredentialsError(message) {
+  const error = new Error(message);
+  error.code = "CODEX_PROVIDER_AUTH_CONFIGURATION_REQUIRED";
+  return error;
 }
 
 function configuredCodexSettings(configPath = path.join(getCodexHome(), "config.toml")) {
@@ -4128,8 +4272,52 @@ function configuredCodexSettings(configPath = path.join(getCodexHome(), "config.
       ? readTomlField(source, providerSection, "requires_openai_auth")
       : null,
     provider_base_url: providerSection ? readTomlField(source, providerSection, "base_url") : null,
+    provider_has_env_key: providerSection ? tomlFieldPresent(source, providerSection, "env_key") : false,
+    provider_env_key: providerSection ? readTomlField(source, providerSection, "env_key") : null,
+    provider_has_experimental_bearer_token: providerSection
+      ? tomlFieldPresent(source, providerSection, "experimental_bearer_token")
+      : false,
     windows_sandbox: readTomlField(source, "windows", "sandbox"),
   };
+}
+
+const CHILD_ENV_FORBIDDEN = /^(?:AEG_|GIT_|NODE_OPTIONS$|NODE_PATH$|LD_|DYLD_|BASH_ENV$|ENV$|SHELLOPTS$|PS4$|PYTHONPATH$|PYTHONHOME$|RUBYOPT$|PERL5OPT$|CLAUDE_CONFIG_DIR$|CODEX_HOME$|AUTONOMOUS_GRAPH_NODE$|NO_COLOR$)/i;
+
+function validateProjectableEnvironmentKey(key, label) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+    throw new Error(`${label} contains an invalid environment name: ${key}`);
+  }
+  if (CHILD_ENV_FORBIDDEN.test(key)) {
+    throw new Error(`${label} cannot project execution-control variable: ${key}`);
+  }
+}
+
+function providerEnvironmentKey(providerEnvKey, sourceEnvironment, platform = process.platform) {
+  if (providerEnvKey === null || providerEnvKey === undefined || String(providerEnvKey).trim() === "") return null;
+  const key = String(providerEnvKey).trim();
+  try {
+    validateProjectableEnvironmentKey(key, "Codex provider env_key");
+  } catch (error) {
+    throw codexProviderCredentialsError(error.message || String(error));
+  }
+  const explicit = new Set(configuredChildEnvironmentKeys(sourceEnvironment).map((name) => name.toUpperCase()));
+  if (!explicit.has(key.toUpperCase())) {
+    throw codexProviderCredentialsError(
+      `Codex provider env_key ${key} must be explicitly listed in AEG_CHILD_ENV_KEYS`,
+    );
+  }
+  const sourceKey = Object.keys(sourceEnvironment).find((candidate) =>
+    platform === "win32" ? candidate.toUpperCase() === key.toUpperCase() : candidate === key,
+  );
+  if (
+    !sourceKey ||
+    sourceEnvironment[sourceKey] === undefined ||
+    sourceEnvironment[sourceKey] === null ||
+    String(sourceEnvironment[sourceKey]).trim() === ""
+  ) {
+    throw codexProviderCredentialsError(`Codex provider env_key ${key} is not set in the parent environment`);
+  }
+  return key;
 }
 
 function isolatedCodexConfigArgs({
@@ -4153,6 +4341,22 @@ function isolatedCodexConfigArgs({
   }
   if (resolvedSettings.model_provider) {
     const providerPrefix = `model_providers.${resolvedSettings.model_provider}`;
+    const providerEnvKey = providerEnvironmentKey(resolvedSettings.provider_env_key, sourceEnvironment, platform);
+    if (resolvedSettings.provider_has_env_key === true && !providerEnvKey) {
+      throw codexProviderCredentialsError(
+        "Codex provider env_key is present but empty or not a valid environment name; configure a non-empty dedicated variable and explicitly list it in AEG_CHILD_ENV_KEYS",
+      );
+    }
+    if (
+      resolvedSettings.provider_has_experimental_bearer_token === true &&
+      !controlledTestFixtureBinding(sourceEnvironment, "codex")
+    ) {
+      throw codexProviderCredentialsError(
+        providerEnvKey
+          ? "Codex provider still declares experimental_bearer_token; remove the legacy bearer token and use model_providers.<id>.env_key with an explicitly named variable in AEG_CHILD_ENV_KEYS"
+          : "Codex provider uses experimental_bearer_token, which is not projected into isolated children; configure model_providers.<id>.env_key and explicitly name that variable in AEG_CHILD_ENV_KEYS",
+      );
+    }
     const credentialEndpointKey = credentialBearingProviderEnvironmentKey(
       resolvedSettings.provider_base_url,
       sourceEnvironment,
@@ -4161,6 +4365,7 @@ function isolatedCodexConfigArgs({
       ["name", resolvedSettings.provider_name],
       ["wire_api", resolvedSettings.provider_wire_api],
       ["requires_openai_auth", resolvedSettings.provider_requires_openai_auth],
+      ["env_key", providerEnvKey],
       // Credential-bearing endpoints are supplied through the explicitly
       // projected environment, never through child process argv.
       ["base_url", credentialEndpointKey ? null : resolvedSettings.provider_base_url],
@@ -4360,15 +4565,9 @@ function gitProcessEnvironment(sourceEnvironment = process.env) {
 function configuredChildEnvironmentKeys(sourceEnvironment = process.env) {
   const raw = String(sourceEnvironment.AEG_CHILD_ENV_KEYS || "").trim();
   if (!raw) return [];
-  const forbidden = /^(?:AEG_|GIT_|NODE_OPTIONS$|NODE_PATH$|LD_|DYLD_|BASH_ENV$|ENV$|SHELLOPTS$|PS4$|PYTHONPATH$|PYTHONHOME$|RUBYOPT$|PERL5OPT$|CLAUDE_CONFIG_DIR$|CODEX_HOME$|AUTONOMOUS_GRAPH_NODE$|NO_COLOR$)/i;
   const keys = [...new Set(raw.split(/[\s,;]+/).filter(Boolean))];
   for (const key of keys) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-      throw new Error(`AEG_CHILD_ENV_KEYS contains an invalid environment name: ${key}`);
-    }
-    if (forbidden.test(key)) {
-      throw new Error(`AEG_CHILD_ENV_KEYS cannot project execution-control variable: ${key}`);
-    }
+    validateProjectableEnvironmentKey(key, "AEG_CHILD_ENV_KEYS");
   }
   return keys;
 }
@@ -4418,12 +4617,12 @@ function credentialBearingProviderEnvironmentKey(providerBaseUrl, sourceEnvironm
   const sourceKey = Object.keys(sourceEnvironment).find((key) => key.toUpperCase() === "OPENAI_BASE_URL");
   const sourceValue = sourceKey ? sourceEnvironment[sourceKey] : null;
   if (!explicit.has("OPENAI_BASE_URL") || !sourceValue) {
-    throw new Error(
+    throw codexProviderCredentialsError(
       "Codex provider base_url contains embedded credentials; move the endpoint to OPENAI_BASE_URL and explicitly name OPENAI_BASE_URL in AEG_CHILD_ENV_KEYS",
     );
   }
   if (endpointCredentialFreeIdentity(sourceValue) !== endpointCredentialFreeIdentity(providerBaseUrl)) {
-    throw new Error(
+    throw codexProviderCredentialsError(
       "Codex provider base_url does not match the explicitly projected OPENAI_BASE_URL endpoint; refusing to expose credentials in child arguments",
     );
   }
@@ -4534,11 +4733,21 @@ function separateCodexHomeRequired(platform = process.platform) {
   return platform !== "win32";
 }
 
-function redactEvidence(value) {
+function redactEvidence(value, extraSecretKeys = [], sourceEnvironment = process.env) {
   let redacted = String(value || "");
-  for (const [key, secret] of Object.entries(process.env)) {
-    if (!/(key|token|secret|password|credential|authorization)/i.test(key) || !secret || secret.length < 6) continue;
-    redacted = redacted.split(secret).join("[REDACTED_ENV_SECRET]");
+  const explicitKeys = new Set(
+    (Array.isArray(extraSecretKeys) ? extraSecretKeys : []).map((key) => String(key).toUpperCase()),
+  );
+  const environment = sourceEnvironment && typeof sourceEnvironment === "object" ? sourceEnvironment : process.env;
+  for (const [key, secret] of Object.entries(environment)) {
+    const explicitlyProjected = explicitKeys.has(key.toUpperCase());
+    const secretText = String(secret ?? "");
+    if (
+      (!/(key|token|secret|password|credential|authorization)/i.test(key) && !explicitlyProjected) ||
+      !secretText ||
+      (!explicitlyProjected && secretText.length < 6)
+    ) continue;
+    redacted = redacted.split(secretText).join("[REDACTED_ENV_SECRET]");
   }
   return redacted
     .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi, "[REDACTED_PRIVATE_KEY]")
@@ -4549,11 +4758,13 @@ function redactEvidence(value) {
 }
 
 class RedactingLineTransform extends Transform {
-  constructor() {
+  constructor(extraSecretKeys = [], sourceEnvironment = process.env) {
     super();
     this.buffer = "";
     this.decoder = new StringDecoder("utf8");
     this.inPrivateKey = false;
+    this.extraSecretKeys = extraSecretKeys;
+    this.sourceEnvironment = sourceEnvironment;
   }
 
   redactLine(line) {
@@ -4566,7 +4777,7 @@ class RedactingLineTransform extends Transform {
       if (/-----END [^-]*PRIVATE KEY-----/i.test(line)) this.inPrivateKey = false;
       return "";
     }
-    return redactEvidence(line);
+    return redactEvidence(line, this.extraSecretKeys, this.sourceEnvironment);
   }
 
   _transform(chunk, _encoding, callback) {
@@ -5126,6 +5337,14 @@ async function spawnCodex({
   maxTokens = null,
   onQueueState = null,
 }) {
+  const sourceEnvironment = { ...process.env };
+  // Validate and materialize the non-secret provider projection before creating
+  // attempt files or taking a model-queue slot. A missing credential binding
+  // must never consume capacity, leave residue, or reach the provider as an
+  // unauthenticated request.
+  const isolatedConfig = backend === "codex" && isolatedCodexConfig
+    ? isolatedCodexConfigArgs({ model, reasoningEffort, sourceEnvironment })
+    : [];
   await mkdir(nodeDir, { recursive: true });
   const attemptDir = path.join(nodeDir, "attempts", `attempt-${attempt}`);
   await mkdir(attemptDir, { recursive: true });
@@ -5219,9 +5438,6 @@ async function spawnCodex({
       if (isolatedCodexConfig && separateCodexHomeRequired()) {
         isolatedCodexHome = await prepareIsolatedCodexHome(attemptDir);
       }
-      const isolatedConfig = isolatedCodexConfig
-        ? isolatedCodexConfigArgs({ model, reasoningEffort, sourceEnvironment: process.env })
-        : [];
       const approvalArgs = codexExecArgs();
       args = [
         ...invocation.prefix,
@@ -5252,8 +5468,8 @@ async function spawnCodex({
       args.push("-");
     }
 
-    const spawnedEnvironment = childEnvironment({ codexHome: isolatedCodexHome });
-    const explicitChildEnvironmentKeys = configuredChildEnvironmentKeys().filter((name) =>
+    const spawnedEnvironment = childEnvironment({ codexHome: isolatedCodexHome, sourceEnvironment });
+    const explicitChildEnvironmentKeys = configuredChildEnvironmentKeys(sourceEnvironment).filter((name) =>
       Object.keys(spawnedEnvironment).some((key) => key.toUpperCase() === name.toUpperCase()),
     );
     child = spawn(invocation.command, args, {
@@ -5293,8 +5509,12 @@ async function spawnCodex({
   const stderrStream = createWriteStream(stderrPath, { encoding: "utf8", mode: 0o600 });
   const eventsFinished = finished(eventsStream);
   const stderrFinished = finished(stderrStream);
-  child.stdout.pipe(new RedactingLineTransform()).pipe(eventsStream);
-  child.stderr.pipe(new RedactingLineTransform()).pipe(stderrStream);
+  child.stdout
+    .pipe(new RedactingLineTransform(explicitChildEnvironmentKeys, sourceEnvironment))
+    .pipe(eventsStream);
+  child.stderr
+    .pipe(new RedactingLineTransform(explicitChildEnvironmentKeys, sourceEnvironment))
+    .pipe(stderrStream);
   let inputError = null;
   child.stdin.on("error", (error) => {
     inputError = error;
@@ -5333,8 +5553,12 @@ async function spawnCodex({
   clearTimeout(timeout);
   if (forceKill) clearTimeout(forceKill);
   await Promise.all([eventsFinished, stderrFinished]);
-  const rawEvents = (await pathExists(eventsPath)) ? redactEvidence(await readFile(eventsPath, "utf8")) : "";
-  const rawStderr = (await pathExists(stderrPath)) ? redactEvidence(await readFile(stderrPath, "utf8")) : "";
+  const rawEvents = (await pathExists(eventsPath))
+    ? redactEvidence(await readFile(eventsPath, "utf8"), explicitChildEnvironmentKeys, sourceEnvironment)
+    : "";
+  const rawStderr = (await pathExists(stderrPath))
+    ? redactEvidence(await readFile(stderrPath, "utf8"), explicitChildEnvironmentKeys, sourceEnvironment)
+    : "";
   const executionProof = backend === "claude" ? proofFromClaudeEvents(rawEvents) : proofFromEvents(rawEvents);
   tokenGuard.consume(rawEvents);
   tokenGuard.flush();
@@ -5355,7 +5579,11 @@ async function spawnCodex({
       await writeFile(lastMessagePath, lastMessage, { encoding: "utf8", mode: 0o600 });
     }
   } else if (await pathExists(rawLastMessagePath)) {
-    const lastMessage = redactEvidence(await readFile(rawLastMessagePath, "utf8"));
+    const lastMessage = redactEvidence(
+      await readFile(rawLastMessagePath, "utf8"),
+      explicitChildEnvironmentKeys,
+      sourceEnvironment,
+    );
     await writeFile(lastMessagePath, lastMessage, { encoding: "utf8", mode: 0o600 });
     await rm(rawLastMessagePath, { force: true });
   }
@@ -5663,6 +5891,9 @@ function httpStatusesInEvidence(evidence) {
 function permanentBackendFailure(value) {
   const evidence = collectFailureEvidence(value);
   if (!evidence) return null;
+  if (value?.code === "CODEX_PROVIDER_AUTH_CONFIGURATION_REQUIRED") {
+    return { reason: "credentials", evidence: evidence.slice(0, 400) };
+  }
   // Prefer a named cause over a bare status code: "model_not_served" tells the
   // owner what to change, "http_404" does not.
   const signatures = [
@@ -6243,6 +6474,70 @@ function dependencyLimits(nodeKind, compactionLevel = "standard") {
   return Object.fromEntries(Object.entries(base).map(([key, value]) => [key, Math.max(2, Math.floor(value * scale))]));
 }
 
+function supervisionArtifactMetadata(dependency, node, run) {
+  if (node?.kind !== "supervision" || !node?.stage) return null;
+  const state = run?.supervision_state?.[node.stage] || {};
+  const currentArtifactNode = state.artifact_node_id || null;
+  const recheck = state.phase === "rechecking";
+  const originalArtifactNode = node.stage;
+  let role = "supporting_artifact";
+  if (recheck && dependency === currentArtifactNode) {
+    role = "current_corrected_artifact";
+  } else if (recheck && dependency === originalArtifactNode && currentArtifactNode !== originalArtifactNode) {
+    role = "historical_lineage_reference";
+  } else if (recheck && dependency === state.node_id) {
+    role = "prior_supervision_feedback";
+  } else if (dependency === currentArtifactNode || (!recheck && dependency === originalArtifactNode)) {
+    role = "current_stage_artifact";
+  }
+  const currentArtifact = role === "current_corrected_artifact" || role === "current_stage_artifact";
+  const historicalArtifact = role === "historical_lineage_reference";
+  return {
+    stage: node.stage,
+    role,
+    recheck,
+    current_artifact_node: currentArtifactNode,
+    status_is_authoritative: currentArtifact,
+    status_semantics: currentArtifact
+      ? "Use this artifact status and gate as the current stage decision input."
+      : historicalArtifact
+        ? "Historical lineage only. Preserve its identity and scope, but do not treat its status or gate as the current stage decision."
+        : role === "prior_supervision_feedback"
+          ? "Prior supervision feedback only. Use it to compare the correction, not as the current implementation status."
+          : "Supporting context only; do not use it as the current stage decision.",
+  };
+}
+
+function supervisionArtifactRank(dependency, node, run) {
+  const role = supervisionArtifactMetadata(dependency, node, run)?.role;
+  return {
+    current_corrected_artifact: 0,
+    current_stage_artifact: 0,
+    prior_supervision_feedback: 1,
+    historical_lineage_reference: 2,
+    supporting_artifact: 3,
+  }[role] ?? 4;
+}
+
+function supervisionCoverageSummary(result) {
+  const findings = Array.isArray(result?.findings) ? result.findings : [];
+  const evidence = Array.isArray(result?.evidence) ? result.evidence : [];
+  const checks = Array.isArray(result?.checks) ? result.checks : [];
+  const files = Array.isArray(result?.files_changed) ? result.files_changed : [];
+  const actions = Array.isArray(result?.next_actions) ? result.next_actions : [];
+  return {
+    finding_count: findings.length,
+    finding_ids: boundedStrings(findings.map((finding) => finding?.id), 50, 240),
+    finding_fingerprints: boundedStrings(findings.map((finding) => finding?.fingerprint), 50, 320),
+    evidence_count: evidence.length,
+    evidence_sources: boundedStrings(evidence.map((item) => item?.source), 40, 500),
+    check_count: checks.length,
+    check_ids: boundedStrings(checks.map((check) => check?.id), 40, 240),
+    files_changed_count: files.length,
+    next_action_count: actions.length,
+  };
+}
+
 function compactFindingForPrompt(finding) {
   return {
     id: boundedText(finding?.id, 240),
@@ -6357,7 +6652,10 @@ function compactImplementationDependency(dependency, result, run, limits) {
 }
 
 function compactResultForDependency(dependency, result, node, run, compactionLevel = "standard") {
-  const limits = dependencyLimits(node.kind, compactionLevel);
+  const artifactMetadata = supervisionArtifactMetadata(dependency, node, run);
+  const limits = artifactMetadata?.role === "current_corrected_artifact"
+    ? dependencyLimits("implementation", compactionLevel)
+    : dependencyLimits(node.kind, compactionLevel);
   const compacted = compactResultCollections(result, limits);
   if (node.kind === "implementation") return compactImplementationDependency(dependency, result, run, limits);
   if (node.kind === "supervision") {
@@ -6394,6 +6692,9 @@ function compactResultForDependency(dependency, result, node, run, compactionLev
           reason: boundedText(surface.reason, 800),
         })),
         controller_managed_graph: controllerManagedGraphSummary(result),
+        ...(artifactMetadata?.role === "current_corrected_artifact"
+          ? { current_artifact_coverage: supervisionCoverageSummary(result) }
+          : {}),
       };
     }
     const blockers = compactBlockers(result.blockers, { limit: limits.blockers });
@@ -6408,6 +6709,9 @@ function compactResultForDependency(dependency, result, node, run, compactionLev
       next_actions: compacted.next_actions,
       files_changed: compacted.files_changed,
       compaction: compacted.compaction,
+      ...(artifactMetadata?.role === "current_corrected_artifact"
+        ? { current_artifact_coverage: supervisionCoverageSummary(result) }
+        : {}),
     };
   }
   if (node.kind === "independent_review") {
@@ -6626,15 +6930,21 @@ function promptRequiredChecks(checks, node, compactionLevel) {
 
 async function dependencyContext(node, runDir, run, compactionLevel = "standard") {
   const artifacts = [];
-  const dependencies = dependencyIdsForNode(node, run);
+  const dependencies = node.kind === "supervision"
+    ? [...dependencyIdsForNode(node, run)].sort(
+        (left, right) => supervisionArtifactRank(left, node, run) - supervisionArtifactRank(right, node, run),
+      )
+    : dependencyIdsForNode(node, run);
   for (const dependency of dependencies) {
     const resultPath = path.join(runDir, "nodes", dependency, "result.json");
     const proofPath = path.join(runDir, "nodes", dependency, "proof.json");
     if (await pathExists(resultPath)) {
       const proof = (await pathExists(proofPath)) ? await readJson(proofPath) : null;
       const result = await readJson(resultPath);
+      const artifactMetadata = supervisionArtifactMetadata(dependency, node, run);
       artifacts.push({
         node: dependency,
+        ...(artifactMetadata ? { artifact_context: artifactMetadata } : {}),
         result: compactResultForDependency(dependency, result, node, run, compactionLevel),
         proof: compactDependencyProof(proof, node.kind, compactionLevel),
       });
@@ -8513,7 +8823,7 @@ async function stopForLoopNoProgress(run, runDir, observation) {
   await saveRun(runDir, run);
 }
 
-function supervisionNode(stage, dependency, round = 0) {
+function supervisionNode(stage, dependency, round = 0, run = null) {
   const suffix = round > 0 ? `-r${round}` : "";
   const titles = {
     planner: "Plan supervision",
@@ -8525,6 +8835,14 @@ function supervisionNode(stage, dependency, round = 0) {
     synthesis: "Check that findings are evidenced, deduplicated, complete, prioritized, within scope, and executable without hidden owner decisions.",
     implementation: "Check implementation coverage, unintended changes, required tests, unresolved findings, and whether correction is needed before formal verification.",
   };
+  const state = run?.supervision_state?.[stage] || {};
+  const currentArtifact = state.artifact_node_id || dependency;
+  const historicalArtifact = state.phase === "rechecking" && currentArtifact !== stage ? stage : null;
+  const focus = round > 0
+    ? `${focuses[stage]} This is a bounded supervision recheck after one correction. The authoritative current artifact is ${currentArtifact}; judge readiness from its status, gate, complete findings, evidence, files, and machine proof. ${historicalArtifact
+      ? `The ${historicalArtifact} artifact is retained only as historical lineage for scope comparison; its prior status (including needs_retry) and superseded next_actions must not be treated as the current stage decision.`
+      : "Earlier artifacts are supporting context only and must not override the current artifact."} Do not request another correction solely because a historical artifact retains status=needs_retry.`
+    : focuses[stage];
   return {
     id: `${stage}-supervision${suffix}`,
     title: `${titles[stage]}${round > 0 ? ` round ${round + 1}` : ""}`,
@@ -8532,7 +8850,7 @@ function supervisionNode(stage, dependency, round = 0) {
     stage,
     depends_on: [dependency],
     skills: [],
-    focus: focuses[stage],
+    focus,
     write_access: false,
   };
 }
@@ -8566,7 +8884,7 @@ async function runSupervisionGate({ stage, dependency, run, runDir, catalog, opt
   if (options.supervision === "off") {
     return { status: "skipped", gate: "not_applicable", summary: "Stage supervision disabled", blockers: [], findings: [], next_actions: [] };
   }
-  const node = supervisionNode(stage, dependency, round);
+  const node = supervisionNode(stage, dependency, round, run);
   let result = await runNode({ node, run, runDir, catalog, options: { ...options } });
   if (stage === "planner") {
     const override = plannerEnvironmentCoverageOverride(result, run.plan);

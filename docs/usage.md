@@ -224,6 +224,15 @@ passes only named values, records only their names in attempt evidence, redacts
 URL userinfo and credential queries, and rejects execution-control names such
 as `NODE_OPTIONS`, `GIT_*`, and `CLAUDE_CONFIG_DIR`.
 
+For a Codex custom provider, set `model_providers.<id>.env_key` to the name of
+the provider key variable and include that same name in `AEG_CHILD_ENV_KEYS`.
+The child receives the variable name in its isolated config and the value only
+through the explicitly projected environment. Remove any
+`experimental_bearer_token` field and migrate it to an environment-backed key
+before running Graph or the paired evaluation; a real isolated child rejects
+the legacy field. Never put the provider secret in `--config`, command
+arguments, repository files, or evaluation artifacts.
+
 Installer updates, runner registration, live runs, and result application use
 the fixed user-level control root `~/.graph-engineering/runtime-control` (under
 `%USERPROFILE%` on Windows). It is intentionally independent of custom

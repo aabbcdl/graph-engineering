@@ -49,6 +49,7 @@ import {
   runnerRegistryRoot,
   runtimeControlRoot,
 } from "./runtime-admission.mjs";
+import { graphVersionReport, renderVersionReport } from "./version-info.mjs";
 import { preflightEnvironment, prepareExecutionWorkspace, runPreflightCommand } from "./workspace-preflight.mjs";
 import { applyResults } from "./apply-results.mjs";
 import {
@@ -869,6 +870,7 @@ function parseArgs(argv) {
     "no-clear",
     "changes-only",
     "follow",
+    "check",
     "machine-preflight",
     "machine-preflight-gradle",
   ]);
@@ -13522,6 +13524,9 @@ async function recheckRun({ run, runDir, scope, options }) {
 
 function printHelp(command = null) {
   const commandHelp = {
+    version: `Usage: graph-engineering version [--check] [--json]
+
+Show the installed Graph Engineering package version, installation source, source commit when recorded, and runner integrity. --check also reads public GitHub and NPM metadata to report whether the installed copy is current for its channel; a network failure is reported as unknown rather than current.`,
     start: `Usage: graph-engineering start --goal <text> --user-approved [--workspace <path>] [--workspace-mode <auto|live|worktree|copy>] [--supervision <stage|off>] [--assurance <auto|standard|high>] [--mode <task|audit|diagnosis|review>] [--machine-preflight] [--machine-preflight-gradle] [--plan-only] [--dry-run]
 
 Run a new graph only after an explicit current-task user request. --user-approved records that approval and is required by the CLI; it is never inferred from goal wording. Version 3 defaults to an isolated snapshot (Git worktree when possible, otherwise a safe copy) and stage supervision after planning, synthesis, and implementation. --mode review compiles a fully read-only assessment graph and defers implementation, runtime verification, correction, and result application. --plan-only asks the model to compile and report the graph without executing nodes. --dry-run skips the model and workspace edits and checks the deterministic graph setup only.`,
@@ -13584,6 +13589,7 @@ Preview retention candidates by default. --execute deletes only terminal Runs ol
   console.log(`Graph Engineering
 
 Commands:
+  version   Show installed identity and optionally check GitHub/NPM for updates
   start     Plan and run a new autonomous engineering graph in the foreground
   submit    Start a new graph in the background and return its run id after confirmed handoff
   resume    Continue an exact saved run, including scoped owner approval
@@ -13681,6 +13687,7 @@ Common options:
   --follow                 After confirmed submit/background resume, watch the exact run until terminal
   --background             Resume one exact saved run in a hidden background runner
   --json                    Print machine-readable command result
+  --check                   Check public GitHub/NPM version metadata (version only)
   --force                   Re-run completed nodes or regenerate a report
   --authorize <scope>       Approve only the exact owner-gate scope printed in a report
 
@@ -13694,6 +13701,15 @@ async function main(argv = process.argv.slice(2)) {
   const parsed = parseArgs(argv);
   if (["help", "--help", "-h"].includes(parsed.command) || parsed.options.help) {
     printHelp(["help", "--help", "-h"].includes(parsed.command) ? null : parsed.command);
+    return 0;
+  }
+  if (["version", "--version", "-V"].includes(parsed.command)) {
+    const report = await graphVersionReport({
+      skillDir: SKILL_DIR,
+      runnerSha256: GRAPH_RUNNER_SHA256,
+      checkLatest: Boolean(parsed.options.check),
+    });
+    console.log(parsed.options.json ? JSON.stringify(report) : renderVersionReport(report));
     return 0;
   }
   const options = normalizedOptions(parsed.options);

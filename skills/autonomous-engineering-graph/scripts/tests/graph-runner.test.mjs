@@ -112,6 +112,7 @@ import { applyResults } from "../apply-results.mjs";
 import { acquireRuntimeAdmission, runtimeControlRoot } from "../runtime-admission.mjs";
 import { appendRunEvent, evaluateRequiredChecks } from "../runtime/index.mjs";
 import { prepareExecutionWorkspace, __test as workspacePreflightTest } from "../workspace-preflight.mjs";
+import { INSTALLATION_METADATA_FILE } from "../version-info.mjs";
 import { installGraph } from "../../../../scripts/install.mjs";
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -125,6 +126,7 @@ const AUTONOMOUS_SKILL = path.resolve(TEST_DIR, "..", "..", "SKILL.md");
 const GRAPH_CONTRACT = path.resolve(TEST_DIR, "..", "..", "references", "graph-contract.md");
 const LIFECYCLE_CONTROLLER = path.resolve(TEST_DIR, "..", "..", "references", "lifecycle-controller.md");
 const NODE_RUNTIME_CONTRACT = path.resolve(TEST_DIR, "..", "..", "references", "node-runtime-contract.md");
+const PACKAGE_VERSION = JSON.parse(await readFile(path.join(TEST_DIR, "..", "..", "..", "..", "package.json"), "utf8")).version;
 const INTEGRATION_TIMEOUT = 60_000;
 // Windows process creation and the installer hash scan can exceed the normal
 // child deadline when the host is under load. Keep the bound finite, but give
@@ -282,6 +284,10 @@ test("parseArgs handles values and booleans", () => {
     command: "resume",
     options: { background: true, follow: true, run: "fixture" },
   });
+  assert.deepEqual(parseArgs(["version", "--check", "--json"]), {
+    command: "version",
+    options: { check: true, json: true },
+  });
   assert.deepEqual(parseArgs(["watch", "--run", "fixture", "--interval-seconds", "3", "--stale-seconds", "90", "--heartbeat-seconds", "60", "--changes-only", "--once", "--no-clear"]), {
     command: "watch",
     options: {
@@ -338,6 +344,7 @@ test("CLI help exposes isolation, supervision, role routing, notifications, and 
     "--stale-seconds <n>",
     "--since <sequence>",
     "--type <event>",
+    "--check",
   ]) {
     assert.match(help.stdout, new RegExp(option.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
@@ -351,6 +358,25 @@ test("CLI help exposes isolation, supervision, role routing, notifications, and 
   const eventsHelp = spawnSync(process.execPath, [RUNNER, "events", "--help"], { encoding: "utf8", timeout: INTEGRATION_TIMEOUT });
   assert.equal(eventsHelp.status, 0, eventsHelp.stderr || eventsHelp.stdout);
   assert.match(eventsHelp.stdout, /append-only event stream/i);
+
+  const versionHelp = spawnSync(process.execPath, [RUNNER, "version", "--help"], { encoding: "utf8", timeout: INTEGRATION_TIMEOUT });
+  assert.equal(versionHelp.status, 0, versionHelp.stderr || versionHelp.stdout);
+  assert.match(versionHelp.stdout, /installation source/i);
+  assert.match(versionHelp.stdout, /network failure.*unknown/i);
+});
+
+test("CLI version reports the local package identity without requiring a network check", () => {
+  for (const args of [["version", "--json"], ["--version", "--json"]]) {
+    const execution = spawnSync(process.execPath, [RUNNER, ...args], { encoding: "utf8", timeout: INTEGRATION_TIMEOUT });
+    assert.equal(execution.status, 0, execution.stderr || execution.stdout);
+    const report = JSON.parse(execution.stdout.trim());
+    assert.equal(report.status, "installed");
+    assert.equal(report.installed.package_name, "graph-engineering");
+    assert.equal(report.installed.package_version, PACKAGE_VERSION);
+    assert.equal(report.latest_checked, false);
+    assert.equal(report.latest, null);
+    assert.match(report.installed.runtime.runner_sha256, /^[0-9a-f]{64}$/);
+  }
 });
 
 test("first start reports storage locations once without contaminating JSON stdout", async (t) => {
@@ -10317,11 +10343,41 @@ test("global installer refuses an active runtime and installs a validated staged
   assert.equal(installed.status, 0, spawnResultDetails(installed));
   const output = JSON.parse(installed.stdout.trim());
   assert.equal(output.status, "installed");
+  assert.equal(output.package, "graph-engineering");
+  assert.equal(output.version, PACKAGE_VERSION);
   assert.equal(output.skills.includes("autonomous-engineering-graph"), true);
-  const installedSkill = await readFile(path.join(codexHome, "skills", "autonomous-engineering-graph", "SKILL.md"), "utf8");
+  const installedSkillPath = path.join(codexHome, "skills", "autonomous-engineering-graph", "SKILL.md");
+  const installedSkill = await readFile(installedSkillPath, "utf8");
   assert.match(installedSkill, /current task.*explicitly names|explicitly accepts/is);
   assert.match(installedSkill, /--follow/);
-  assert.match(await readFile(path.join(binDir, process.platform === "win32" ? "graph-engineering.cmd" : "graph-engineering"), "utf8"), /graph-runner\.mjs/);
+  assert.match(installedSkill, /Before creating any new Graph Run.*version --check/is);
+  const installedLauncher = path.join(binDir, process.platform === "win32" ? "graph-engineering.cmd" : "graph-engineering");
+  assert.match(await readFile(installedLauncher, "utf8"), /graph-runner\.mjs/);
+  const metadataPath = path.join(codexHome, "skills", "autonomous-engineering-graph", INSTALLATION_METADATA_FILE);
+  const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
+  assert.equal(path.resolve(output.install_metadata), path.resolve(metadataPath));
+  assert.equal(metadata.package_name, "graph-engineering");
+  assert.equal(metadata.package_version, PACKAGE_VERSION);
+  assert.match(metadata.runner_sha256, /^[0-9a-f]{64}$/);
+  assert.match(metadata.skills_sha256, /^[0-9a-f]{64}$/);
+  assert.equal(metadata.skill_names.includes("autonomous-engineering-graph"), true);
+  const installedRunner = path.join(codexHome, "skills", "autonomous-engineering-graph", "scripts", "graph-runner.mjs");
+  assert.equal(metadata.runner_sha256, contentHash(await readFile(installedRunner)));
+  const versionBefore = spawnSync(process.execPath, [installedRunner, "version", "--json"], {
+    encoding: "utf8",
+    timeout: INTEGRATION_TIMEOUT,
+    env: { ...process.env, CODEX_HOME: codexHome },
+  });
+  assert.equal(versionBefore.status, 0, spawnResultDetails(versionBefore));
+  assert.equal(JSON.parse(versionBefore.stdout).installed.runtime.integrity, "verified");
+  await writeFile(installedSkillPath, `${installedSkill}\nlocal modification\n`, "utf8");
+  const versionAfter = spawnSync(process.execPath, [installedRunner, "version", "--json"], {
+    encoding: "utf8",
+    timeout: INTEGRATION_TIMEOUT,
+    env: { ...process.env, CODEX_HOME: codexHome },
+  });
+  assert.equal(versionAfter.status, 0, spawnResultDetails(versionAfter));
+  assert.equal(JSON.parse(versionAfter.stdout).installed.runtime.integrity, "modified");
   assert.deepEqual((await readdir(path.join(codexHome, "skills"))).filter((name) => name.startsWith(".graph-engineering-")), []);
 });
 

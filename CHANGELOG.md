@@ -2,6 +2,12 @@
 
 ## 0.3.2
 
+- Add installation provenance plus offline `version` and explicit
+  `version --check` commands so users and Agents can distinguish the installed
+  Git source or package and the complete deployed Skill set from canonical
+  GitHub `main` and NPM `latest`.
+- Document the complete first-user flow, one-prompt repository runs, and
+  Agent-managed updates without introducing silent self-update behavior.
 - Add source-checkout-only Run archive tooling that exports sanitized operational
   metadata and evidence-file hashes without copying workspace or report content.
 - Harden paired-evaluation state-root isolation and stop later repetitions after

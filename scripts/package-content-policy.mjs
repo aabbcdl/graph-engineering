@@ -128,6 +128,7 @@ async function validateReleaseDocuments({ projectRoot, files, packageJson }) {
     "dist.fileCount",
     "dist-tags.latest",
     "help",
+    "version",
     "preview",
     "doctor",
     "validate",

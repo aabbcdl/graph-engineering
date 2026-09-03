@@ -10,6 +10,11 @@ Graph Engineering 是一个面向本地代码仓库的、可暂停可恢复、�
 
 > A durable, evidence-driven control plane for long-running multi-agent repository work.
 
+用户入口可以直接表达为：**一次安装，此后每个仓库任务只需要一段提示词。**
+Agent 负责版本检查、预演、启动、持续跟踪和证据汇总；用户只需要提供仓库路径、
+明确目标和权限边界。这里的“一段提示词”描述操作入口，不承诺发现所有缺陷，
+也不自动授权 `apply`、提交或发布。
+
 ## 它解决什么问题
 
 普通单 Agent 适合短任务，但大型仓库和长任务容易遇到四类问题：
@@ -69,9 +74,11 @@ cd graph-engineering
 npm run install:global
 graph-engineering validate
 graph-engineering doctor --agent-backend codex --json
+graph-engineering version --check --json
 ~~~
 
-画面重点：没有手工复制 Skill，没有启动常驻服务器；安装结果和环境缺口可读。
+画面重点：没有手工复制 Skill，没有启动常驻服务器；安装结果、环境缺口、
+已安装版本和公开最新版本都可读。
 
 ### 0:30—1:00：只读预览
 

@@ -118,7 +118,7 @@ test("release document policy accepts canonical contract routing and complete ro
     "npm dist-tag add graph-engineering@0.3.1 latest",
     "npm deprecate graph-engineering@0.3.2 withdrawn",
     "gitHead dist.shasum dist.integrity dist.fileCount dist-tags.latest",
-    "help preview doctor validate",
+    "help version preview doctor validate",
   ].join("\n"));
   const violations = await validateReleaseDocuments({
     projectRoot: root,

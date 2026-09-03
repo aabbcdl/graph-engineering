@@ -20,10 +20,22 @@ configuration, documentation, and release work stays in the current task.
 Pass `--user-approved` only after the current-task opt-in above; it records run
 creation approval and never bypasses owner gates or protected-action policy.
 
-Graph runner or Skill maintenance and Graph lifecycle commands (`status`,
-`watch`, `queue`, `stop`, `resume`, `purge`, `validate`) are handled directly
-and never create a new run. Never invoke Graph recursively from a Graph node
-(the controller contract or `GRAPH_RUN_ID` is authoritative).
+Graph runner or Skill maintenance and Graph lifecycle commands (`version`,
+`status`, `watch`, `queue`, `stop`, `resume`, `purge`, `validate`) are handled
+directly and never create a new run. Never invoke Graph recursively from a
+Graph node (the controller contract or `GRAPH_RUN_ID` is authoritative).
+
+Before creating any new Graph Run, run `graph-engineering version --check
+--json`. Do not launch when the status is `update_available`, `modified`, or
+`unknown`; report the installed identity and the returned update path instead.
+Treat only `current` or an explicitly reported `ahead_of_stable` source as
+identified for the requested Run. When the user explicitly asks to update,
+follow the recorded source channel and the README update procedure: wait for
+active Runs, preserve a dirty checkout, use fast-forward-only Git or NPM
+`latest` as applicable, rerun the explicit installer, then verify `validate`,
+`doctor`, and `version --check`. Updating Graph never authorizes a repository Run.
+If `version` is unavailable or reports legacy metadata, use a fresh canonical
+GitHub checkout; do not guess that NPM `latest` is newer than the local copy.
 
 Before launch, state the workspace and goal, that several fresh agent processes
 will run, that each node may take minutes, and that shared model capacity may

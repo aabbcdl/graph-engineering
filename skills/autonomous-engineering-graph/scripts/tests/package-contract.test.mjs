@@ -28,6 +28,7 @@ test("npm package retains runtime references and agent metadata", () => {
     "LICENSE",
     "SECURITY.md",
     "scripts/install.mjs",
+    "skills/autonomous-engineering-graph/scripts/version-info.mjs",
     "skills/autonomous-engineering-graph/references/specialist-pack.json",
     "skills/autonomous-engineering-graph/references/node-runtime-contract.md",
     "skills/graph-engineering-quality/agents/openai.yaml",
@@ -56,6 +57,10 @@ test("installed npm bin exercises the core control-plane commands", { timeout: 1
   const report = JSON.parse(result.stdout.trim());
   assert.equal(report.entrypoint, "npm-bin");
   assert.equal(report.commands.help.status, "pass");
+  assert.equal(report.commands.version.status, "installed");
+  assert.equal(report.commands.version.latest_checked, false);
+  assert.equal(report.commands.installed_version.metadata, "recorded");
+  assert.equal(report.commands.installed_version.integrity, "verified");
   assert.equal(report.commands.preview.status, "preview");
   assert.equal(report.commands.preview.mode, "audit");
   assert.equal(report.commands.preview.creates_state, false);

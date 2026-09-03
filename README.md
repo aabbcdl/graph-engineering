@@ -24,20 +24,30 @@ Please install Graph Engineering from the repository URL above on this Mac.
 3. Clone the repository if it is not already available locally.
 4. Run npm run install:global from the repository root.
 5. Run graph-engineering validate and the appropriate graph-engineering doctor --agent-backend codex --json or --agent-backend claude --json check.
-6. Do not publish to NPM, push to GitHub, modify another project, or start a real Graph Run without my explicit approval.
-7. Report exactly what was installed, which checks passed, and any remaining waiting_environment or waiting_budget condition.
+6. Run graph-engineering version --check --json and report the installed source,
+   version, commit, integrity, and public-channel status.
+7. Do not publish to NPM, push to GitHub, modify another project, or start a real Graph Run without my explicit approval.
+8. Report exactly what was installed, which checks passed, and any remaining waiting_environment or waiting_budget condition.
 ~~~
 
 The Agent should show the exact paths and commands it used. Installation is an
 explicit local setup action; it does not grant permission to run Graph against a
 project or to apply any generated change.
 
+For a brand-new user, that is the only setup step. After the Agent reports that
+`validate` and `doctor` passed, open a fresh Agent task so the newly installed
+Skill is discovered, then use one of the prompts below for the target repository.
+The complete user journey is therefore **one setup prompt, then one prompt per
+Graph run**. A shell-capable Agent performs the commands; the user does not need
+to learn the runner layout.
+
 ## One Prompt, One Run
 
 Once Graph Engineering is installed, one clear prompt takes an Agent from a
 repository path to an isolated, evidence-backed result. Name the repository,
 state one bounded goal, and choose the outcome you want. The Agent handles the
-preview, Graph run, specialist work, progress tracking, and final evidence.
+version check, preview, Graph run, specialist work, progress tracking, and final
+evidence.
 
 Use this prompt when you want an assessment only:
 
@@ -50,6 +60,9 @@ Goal: <one concrete question or bounded area to assess>
 Scope: <directories, files, or commit to inspect>
 Exclusions: do not modify code; do not apply, commit, push, publish, deploy,
 or perform other external mutations.
+Version policy: first run `graph-engineering version --check --json`. If its
+status is `update_available`, `modified`, or `unknown`, report the update path
+and do not start a stale or unidentified runtime.
 
 I explicitly approve creating this Graph run. Before launch, confirm the
 workspace, isolation mode, selected backend/model, budget, and that several
@@ -73,6 +86,9 @@ Acceptance: <tests, behavior, or other evidence that must pass>
 Permissions: work only in Graph's isolated workspace. Do not write back to
 the source repository; do not apply, commit, push, publish, deploy, or perform
 other protected actions.
+Version policy: first run `graph-engineering version --check --json`. If its
+status is `update_available`, `modified`, or `unknown`, report the update path
+and do not start a stale or unidentified runtime.
 
 I explicitly approve creating this Graph run. Before launch, confirm the
 workspace, isolation mode, selected backend/model, budget, and that several
@@ -108,6 +124,7 @@ for the evidence model, demo script, metrics, and ready-to-use launch copy.
 - Windows-safe short execution paths, explicit Git long-path support, and transactional cleanup of partial snapshots;
 - artifact-only control gates after planning, synthesis, and implementation, with one bounded correction per stage and no repeated repository discovery;
 - backend, model, and reasoning-effort selection by role;
+- installed-version provenance and an explicit GitHub/NPM freshness check;
 - terminal notifications and a machine-readable `completion.json`;
 - a read-only live watcher that shows real checkpoints, runner/model activity, queue state, quiet time, and blockers without using model tokens;
 - an append-only lifecycle event stream and content-addressed artifacts, so every work item can be inspected and resumed independently;
@@ -162,6 +179,7 @@ cd graph-engineering
 npm run install:global
 graph-engineering validate
 graph-engineering doctor --agent-backend codex --json
+graph-engineering version --check --json
 ```
 
 The installer copies the bundled Skills into ~/.codex/skills and writes the
@@ -183,6 +201,83 @@ The package provides the explicit `graph-engineering-install` command; it must
 not silently mutate ~/.codex/skills from an npm postinstall hook. The installer
 is deliberately separate from the runtime CLI so an npm upgrade can be inspected
 before it replaces the user-level Skills.
+
+## Know and Update the Installed Version
+
+Every new installation records the package version, install source, source
+commit when available, installation time, runner hash, and the full installed
+Graph Skill-set fingerprint. Check that identity without contacting the network:
+
+~~~bash
+graph-engineering version
+~~~
+
+Compare it with the matching public channel when internet access is available:
+
+~~~bash
+graph-engineering version --check --json
+~~~
+
+A Git source installation is compared with the canonical GitHub `main` commit.
+A package installation is compared with the NPM `latest` version. The report
+also shows NPM stable metadata alongside a Git source check, so an unreleased
+source build is not confused with the latest public package. The result is one
+of `current`, `update_available`, `ahead_of_stable`, `modified`, or `unknown`.
+A network failure remains `unknown`; it is never reported as current.
+
+Graph deliberately does not silently replace its own runtime as part of a
+repository Run. Instead, give this prompt to a shell-capable Agent:
+
+~~~text
+Please update Graph Engineering to the newest version for its recorded install
+channel.
+
+1. Run `graph-engineering version --check --json` and report the installed and
+   public identities before changing anything.
+2. Confirm that no Graph Run or model lease is active. Do not stop a Run just
+   to update it.
+3. For a Git source install, use the recorded checkout only when its origin
+   normalizes to `https://github.com/aabbcdl/graph-engineering.git`. Require a
+   clean checkout, update `origin/main` with fast-forward only, and run
+   `npm run install:global` there. Never discard local changes. If the origin
+   is a fork or cannot be verified, use a fresh canonical checkout instead.
+4. For a package install, run `npm install -g graph-engineering@latest`, then
+   run `graph-engineering-install` explicitly.
+5. If `version` is unavailable or reports `legacy-missing`, use a fresh
+   canonical GitHub checkout and its installer; do not assume NPM `latest` is
+   newer than an unidentified local copy.
+6. Run `graph-engineering validate`, the appropriate `doctor` command, and
+   `graph-engineering version --check --json` again.
+7. Report the before/after version and commit, every failed check, and whether
+   a new Agent task is needed to discover the updated Skill. Do not start a
+   repository Run, apply changes, commit, push, publish, or deploy.
+~~~
+
+The equivalent manual update for a clean Git source checkout is:
+
+~~~bash
+git -C "/path/to/graph-engineering" pull --ff-only origin main
+npm --prefix "/path/to/graph-engineering" run install:global
+graph-engineering validate
+graph-engineering doctor --agent-backend codex --json
+graph-engineering version --check --json
+~~~
+
+After a release reaches NPM `latest`, the package-channel update is:
+
+~~~bash
+npm install -g graph-engineering@latest
+graph-engineering-install
+graph-engineering validate
+graph-engineering doctor --agent-backend codex --json
+graph-engineering version --check --json
+~~~
+
+The installer refuses to replace Graph while a runner or model lease is active,
+and restores the previous Skills and launcher if its staged update fails. At the
+time of this `0.3.2` source candidate, NPM `latest` remains `0.3.1`; use the Git
+source channel when testing current `main`, and do not describe the NPM package
+as `0.3.2` until the release gate has completed.
 
 ### Windows is not required for the Mac workflow
 

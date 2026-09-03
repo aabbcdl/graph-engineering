@@ -53,6 +53,7 @@ const required = [
   "生命周期扩展/统一工作流契约.md",
   "scripts/install.mjs",
   "skills/autonomous-engineering-graph/scripts/graph-runner.mjs",
+  "skills/autonomous-engineering-graph/scripts/version-info.mjs",
   "skills/autonomous-engineering-graph/scripts/runtime/event-log.mjs",
   "skills/autonomous-engineering-graph/scripts/runtime/manifest.mjs",
   "skills/autonomous-engineering-graph/references/specialist-pack.json",

@@ -13,6 +13,7 @@ cd graph-engineering
 npm run install:global
 graph-engineering validate
 graph-engineering doctor --agent-backend codex --json
+graph-engineering version --check --json
 ~~~
 
 The repository is the canonical source, and the published package provides the
@@ -31,6 +32,69 @@ graph-engineering-install
 `graph-engineering-install` is an explicit, transactional Skill installation
 step. The package does not use an npm `postinstall` hook to silently modify the
 user's `~/.codex/skills` directory.
+
+## First Run For A New User
+
+A first-time user gives the GitHub URL and the installation prompt in the
+README to a shell-capable Agent. After `validate` and the selected backend's
+`doctor` pass, start a fresh Agent task so the installed Skill is discovered,
+then paste one bounded `review` or `task` prompt. Installation is one-time;
+every later repository Run starts from one prompt naming Graph Engineering,
+the absolute workspace path, mode, goal, scope, and protected-action limits.
+
+## Installed Version And Agent-Managed Updates
+
+The installer writes local provenance for the deployed runtime. `version` is
+offline and reports the installed package version, source type, recorded Git
+commit, installation time, runner hash, and installed Graph Skill-set integrity:
+
+~~~bash
+graph-engineering version
+graph-engineering version --json
+~~~
+
+Add `--check` to read only the fixed public GitHub and NPM metadata endpoints:
+
+~~~bash
+graph-engineering version --check --json
+~~~
+
+Git source installs are compared with canonical GitHub `main`; package installs
+are compared with NPM `latest`. The command returns `current`,
+`update_available`, `ahead_of_stable`, `modified`, or `unknown`. A network or
+metadata failure returns `unknown`, never a false `current`. It sends no
+authorization header or configured provider credential and never installs or
+changes files.
+
+An older installation may not recognize `version` or may report
+`legacy-missing`. Treat that as unidentified: reinstall from a fresh canonical
+GitHub checkout rather than assuming that NPM `latest` is newer.
+
+Updates remain explicit and Agent-managed. Wait for every active Graph Run to
+stop or reach a terminal state. For a clean Git source checkout:
+
+~~~bash
+git -C "/path/to/graph-engineering" pull --ff-only origin main
+npm --prefix "/path/to/graph-engineering" run install:global
+~~~
+
+Use that checkout only when its origin resolves to the canonical
+`https://github.com/aabbcdl/graph-engineering.git` repository. For a fork,
+missing checkout, or unverified origin, install from a fresh canonical checkout
+instead of pulling the recorded remote.
+
+For an NPM installation after the desired release reaches `latest`:
+
+~~~bash
+npm install -g graph-engineering@latest
+graph-engineering-install
+~~~
+
+Run `validate`, `doctor`, and `version --check` after either path. The installer
+refuses an active runner or model lease, stages and validates the new Skills,
+and restores the previous Skills and launcher if the swap fails. It never
+discards changes from a dirty source checkout; the Agent must stop and report
+that state instead of forcing an update.
 
 ## Explicit Opt-In
 

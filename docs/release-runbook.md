@@ -83,21 +83,26 @@ npm view graph-engineering dist-tags.latest
 ```bash
 verify_dir="$(mktemp -d)"
 npm install --prefix "$verify_dir" --ignore-scripts --no-audit --no-fund --prefer-online graph-engineering@0.3.2
-cli="$verify_dir/node_modules/.bin/graph-engineering"
+installer="$verify_dir/node_modules/.bin/graph-engineering-install"
 workspace="$verify_dir/node_modules/graph-engineering"
-"$cli" help
-"$cli" preview --workspace "$workspace" --goal "Post-release smoke" --state-root "$verify_dir/preview-state" --json
-"$cli" doctor --workspace "$workspace" --agent-backend codex --json
-"$cli" validate --workspace "$workspace" --agent-backend codex --state-root "$verify_dir/validate-state" --json
+verify_codex_home="$verify_dir/codex-home"
+verify_bin="$verify_dir/bin"
+"$installer" --codex-home "$verify_codex_home" --bin-dir "$verify_bin"
+installed_cli="$verify_bin/graph-engineering"
+"$installed_cli" help
+"$installed_cli" version --check --json
+"$installed_cli" preview --workspace "$workspace" --goal "Post-release smoke" --state-root "$verify_dir/preview-state" --json
+"$installed_cli" doctor --workspace "$workspace" --agent-backend codex --json
+"$installed_cli" validate --workspace "$workspace" --agent-backend codex --state-root "$verify_dir/validate-state" --json
 ```
 
-验收条件：`help` exit 0；`preview.status=preview` 且 `creates_state=false`；批准的 Mac/Codex 主机上 `doctor.status=ready`；`validate` 不含 `FAIL`，并发现至少 7 个 bundled specialists。
+验收条件：installer exit 0；`help` exit 0；`version.status=current`、`installed.package_version=0.3.2`、`installed.install_metadata=recorded`、`installed.runtime.integrity=verified`、`latest.stable.version=0.3.2`；`preview.status=preview` 且 `creates_state=false`；批准的 Mac/Codex 主机上 `doctor.status=ready`；`validate` 不含 `FAIL`，并发现至少 7 个 bundled specialists。若公开元数据暂时不可达，`version` 必须返回 `unknown` 而不是误报 `current`，并按发布失败阈值停止。
 
 ## 监控窗口和失败阈值
 
 `aabbcdl` 在 registry 首次可见时和 15 分钟后各执行一次身份核验与 clean-install smoke。该 CLI 没有常驻服务或流量看板，因此发布门禁不伪造请求量、错误率或崩溃率；发布期信号就是 registry 身份和真实全新安装的关键命令结果。
 
-失败阈值为零容忍：任一 commit/tag/version、`gitHead`、`dist.shasum`、`dist.integrity`、`dist.fileCount`、`dist.unpackedSize` 或 `dist-tags.latest` 不匹配，或任一 clean-install、`help`、`preview`、`doctor`、`validate` 验收失败，立即触发回滚。registry 在 publish 成功后 10 分钟仍无法返回完整身份，也按失败处理。
+失败阈值为零容忍：任一 commit/tag/version、`gitHead`、`dist.shasum`、`dist.integrity`、`dist.fileCount`、`dist.unpackedSize` 或 `dist-tags.latest` 不匹配，或任一 clean-install、`help`、`version`、`preview`、`doctor`、`validate` 验收失败，立即触发回滚。registry 在 publish 成功后 10 分钟仍无法返回完整身份，也按失败处理。
 
 ## 回滚
 
@@ -110,6 +115,6 @@ npm view graph-engineering dist-tags.latest
 npm view graph-engineering@0.3.2 deprecated
 ```
 
-确认 `latest=0.3.1` 后，从 registry 全新安装 `graph-engineering@0.3.1` 并重跑 `help`、`preview`、`doctor`、`validate`。保留失败版本和 registry 证据以便审计，不删除已发布 artifact。
+确认 `latest=0.3.1` 后，从 registry 全新安装 `graph-engineering@0.3.1` 并重跑该基线支持的 `help`、`preview`、`doctor`、`validate`。保留失败版本和 registry 证据以便审计，不删除已发布 artifact。
 
 GitHub tag/Release 只在发布后 smoke 全绿后创建，因此正常回滚不需要删除或移动 tag。若外部动作顺序被破坏，保留 tag 的提交身份，在 Release 中明确标记 withdrawn；源码修复使用新的 revert/fix commit，不重写 `main` 历史。

@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const packageVersion = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8")).version;
 const root = await mkdtemp(path.join(os.tmpdir(), "graph-engineering-package-smoke-"));
 
 function commandError(label, execution) {
@@ -136,6 +137,36 @@ try {
   if (help.status !== 0 || !/Graph Engineering/i.test(help.stdout)) {
     throw commandError("installed help", help);
   }
+  const versionExecution = runCli(["version", "--json"]);
+  const version = parseJsonCommand("installed package version", versionExecution, [0]);
+  if (
+    version.status !== "installed" ||
+    version.installed?.package_name !== "graph-engineering" ||
+    version.installed?.package_version !== packageVersion ||
+    version.latest_checked !== false
+  ) {
+    throw new Error(`Installed package returned an invalid version record: ${JSON.stringify(version)}`);
+  }
+  const installedRuntime = path.join(
+    installedCodexHome,
+    "skills",
+    "autonomous-engineering-graph",
+    "scripts",
+    "graph-runner.mjs",
+  );
+  const installedVersionExecution = spawnSync(
+    process.execPath,
+    [installedRuntime, "version", "--json"],
+    { cwd: installedPackage, env: installerEnvironment, encoding: "utf8", windowsHide: true },
+  );
+  const installedVersion = parseJsonCommand("installed Skill version", installedVersionExecution, [0]);
+  if (
+    installedVersion.installed?.install_metadata !== "recorded" ||
+    installedVersion.installed?.runtime?.integrity !== "verified" ||
+    installedVersion.installed?.package_version !== packageVersion
+  ) {
+    throw new Error(`Installed Skill returned an invalid version record: ${JSON.stringify(installedVersion)}`);
+  }
   const previewStateRoot = path.join(root, "preview-state");
   const previewExecution = runCli([
     "preview",
@@ -188,14 +219,26 @@ try {
     status: "pass",
     tarball: artifact,
     installed_root: installRoot,
-      entrypoint: "npm-bin",
-      commands: {
-        install: {
-          status: installReport.status,
-          exit_code: installExecution.status,
-          skills: installReport.skills.length,
-        },
-        help: { status: "pass", exit_code: help.status },
+    entrypoint: "npm-bin",
+    commands: {
+      install: {
+        status: installReport.status,
+        exit_code: installExecution.status,
+        skills: installReport.skills.length,
+      },
+      help: { status: "pass", exit_code: help.status },
+      version: {
+        status: version.status,
+        exit_code: versionExecution.status,
+        package_version: version.installed.package_version,
+        latest_checked: version.latest_checked,
+      },
+      installed_version: {
+        status: installedVersion.status,
+        exit_code: installedVersionExecution.status,
+        metadata: installedVersion.installed.install_metadata,
+        integrity: installedVersion.installed.runtime.integrity,
+      },
       preview: {
         status: preview.status,
         exit_code: previewExecution.status,

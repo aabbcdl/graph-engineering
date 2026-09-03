@@ -15,6 +15,10 @@ import {
   runnerRegistryRoot,
   runtimeControlRoot,
 } from "../skills/autonomous-engineering-graph/scripts/runtime-admission.mjs";
+import {
+  createInstallationMetadata,
+  INSTALLATION_METADATA_FILE,
+} from "../skills/autonomous-engineering-graph/scripts/version-info.mjs";
 
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const SOURCE_SKILLS = path.join(PROJECT_ROOT, "skills");
@@ -223,6 +227,11 @@ async function installGraphUnderAdmission({ codexHome, binDir, stateRoots, hooks
   const transaction = `${Date.now()}-${process.pid}`;
   const stage = path.join(targetRoot, `.graph-engineering-stage-${transaction}`);
   const backup = path.join(targetRoot, `.graph-engineering-backup-${transaction}`);
+  const names = (await readdir(SOURCE_SKILLS, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  let installMetadata = null;
   try {
     await cp(SOURCE_SKILLS, stage, { recursive: true, force: false, errorOnExist: true });
     const validate = spawnSync(process.execPath, [path.join(stage, "autonomous-engineering-graph", "scripts", "validate-specialist-pack.mjs"), "--json"], {
@@ -232,11 +241,20 @@ async function installGraphUnderAdmission({ codexHome, binDir, stateRoots, hooks
     if (validate.status !== 0) {
       throw new Error(`Staged Graph validation failed: ${validate.stderr || validate.stdout}`);
     }
+    installMetadata = await createInstallationMetadata({
+      projectRoot: PROJECT_ROOT,
+      skillsRoot: stage,
+      skillNames: names,
+    });
+    await writeFile(
+      path.join(stage, "autonomous-engineering-graph", INSTALLATION_METADATA_FILE),
+      `${JSON.stringify(installMetadata, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
   } catch (error) {
     await rm(stage, { recursive: true, force: true });
     throw error;
   }
-  const names = (await readdir(SOURCE_SKILLS, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
   const launchers = await writeLauncher(binDir, codexHome);
   try {
     await mkdir(binDir, { recursive: true });
@@ -322,9 +340,14 @@ async function installGraphUnderAdmission({ codexHome, binDir, stateRoots, hooks
   }
   return {
     status: "installed",
+    package: installMetadata.package_name,
+    version: installMetadata.package_version,
+    source: installMetadata.source,
+    installed_at: installMetadata.installed_at,
     codex_home: codexHome,
     skills: names,
     bin_dir: binDir,
+    install_metadata: path.join(targetRoot, "autonomous-engineering-graph", INSTALLATION_METADATA_FILE),
     ...(cleanupWarnings.length ? { cleanup_warnings: cleanupWarnings } : {}),
   };
 }

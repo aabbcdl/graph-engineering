@@ -70,6 +70,14 @@ through the transactional Skill and launcher swap. A runner briefly takes that
 same lock while creating its run lock and canonical registry record, closing
 the scan-to-start race and serializing concurrent installers.
 
+The same transaction writes `.graph-engineering-install.json` inside the
+installed control-plane Skill. It binds the package version, installation
+time, Git source identity when available, runner SHA-256, and a content
+fingerprint covering all eight deployed Graph Skills. `graph-engineering
+version` reads only that local record and the installed Graph files. `version
+--check` additionally reads fixed public GitHub and NPM metadata endpoints; it
+does not execute returned content or mutate the install.
+
 ## Environment Contracts And Gate Scope
 
 Required checks carry a machine-readable environment contract. The planner may
@@ -235,3 +243,9 @@ Supervisors receive only a compact representation of the stage they control plus
 ## Installation
 
 Each runner writes a process-identity record in the shared runtime registry as well as its exact run directory, so an external `--state-root` does not hide it from installation safety checks. The installer scans those records, configured/default run roots, and model leases. If any live Graph process exists, installation stops before staging. Otherwise it stages and validates all Skills and launchers, backs up both surfaces, commits them together, and restores both on any pre-commit failure. Cleanup after a successful commit cannot roll back only one surface; a cleanup problem is returned as a warning while the matched runtime remains installed.
+
+Updates remain explicit because replacing the installed Skill changes the code
+used by every later Run. A shell-capable Agent may perform the documented
+fast-forward Git or NPM update after owner approval, but the running CLI never
+self-modifies and never treats a failed public version check as proof that the
+installed copy is current.

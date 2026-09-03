@@ -2,6 +2,8 @@
 
 ## 0.3.2
 
+- Add a Chinese user README with zero-fill full-repository review and repair
+  prompts, installation, version checks, update flow, and safety boundaries.
 - Add installation provenance plus offline `version` and explicit
   `version --check` commands so users and Agents can distinguish the installed
   Git source or package and the complete deployed Skill set from canonical

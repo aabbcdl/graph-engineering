@@ -108,7 +108,7 @@
 - `graph-engineering events` 已提供无模型、只读的事件流读取入口。
 - `preview`、`diff`、`apply`（含 `--dry-run` 与选择性 `--file`）、`recheck`、`runs`、`gc` 六个控制面操作已实现并有 CLI 契约测试覆盖（只读性、无状态残留、变更分类、冲突检查、部分应用记录、recheck 守卫与 `already-satisfied` 快路径）。
 - 15 项控制面改进及后续产品契约修复已落地；发布准备由 `npm run test:eval`、`npm run validate`、`npm run validate:package`、`npm run test:package-smoke` 和 `npm run release:check` 共同门禁，当前版本的精确结果记录在最新收口章节。
-- npm 包边界已通过 tarball 检查：当前 `0.3.2` 为 70 个文件、18 个 references、8 个 agents，且不包含 `evals/`、隐藏测试或仓库专用 smoke 工具；`npm pack --dry-run` 同样确认包含 runtime module map、version provenance、marketing kit、release runbook 和生命周期兼容入口。安装后的显式 Skill installer、`help`、`version`、audit `preview`、fail-closed `doctor` 和 package `validate` 已由 public-bin smoke 覆盖；即使用户 `CODEX_HOME` 为空，运行器也会发现包内七个可供规划的 specialist。
+- npm 包边界已通过 tarball 检查：当前 `0.3.2` 为 71 个文件、18 个 references、8 个 agents，且不包含 `evals/`、隐藏测试或仓库专用 smoke 工具；`npm pack --dry-run` 同样确认包含中英文 README、runtime module map、version provenance、marketing kit、release runbook 和生命周期兼容入口。安装后的显式 Skill installer、`help`、`version`、audit `preview`、fail-closed `doctor` 和 package `validate` 已由 public-bin smoke 覆盖；即使用户 `CODEX_HOME` 为空，运行器也会发现包内七个可供规划的 specialist。
 - `graph-engineering@0.3.0` 和 `graph-engineering@0.3.1` 的 NPM/GitHub 发布记录属于历史基线证据；当前 `0.3.2` 必须绑定新的明确提交、远程 CI、tag、Release 和 tarball 校验后才能发布。
 - 之前记录的旧测试数字属于对应日期的历史证据；不能覆盖本轮跨平台修复后的新验证结果。
 - 本计划、设计说明、架构说明和使用说明已同步描述同一状态语义。

@@ -47,6 +47,7 @@ if (contentViolations.length) {
 const required = [
   "package.json",
   "README.md",
+  "README.zh-CN.md",
   "LICENSE",
   "SECURITY.md",
   "docs/release-runbook.md",

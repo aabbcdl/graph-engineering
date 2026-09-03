@@ -46,6 +46,7 @@
     "CHANGELOG.md",
     "scripts/install.mjs",
     "README.md",
+    "README.zh-CN.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
     "LICENSE"

@@ -2,6 +2,8 @@
 
 > A Mac-first, evidence-driven control plane for long-running multi-agent repository work.
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Graph Engineering turns one explicitly approved project goal into a persisted graph of planning, stage supervision, discovery, specialist review, synthesis, implementation, verification, and fresh independent review. It is designed for work where one conversational agent is not enough: the run needs bounded capacity, isolated execution, resumability, machine-observed evidence, and an honest final state.
 
 It is a standalone project. The installable Skills are the user-facing entry point; the runner, tests, evaluation harness, and release tooling live here as the source of truth.

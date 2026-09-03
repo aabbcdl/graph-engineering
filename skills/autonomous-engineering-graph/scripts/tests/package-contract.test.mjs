@@ -25,6 +25,7 @@ test("npm package retains runtime references and agent metadata", () => {
   const files = packedFiles();
   for (const required of [
     "README.md",
+    "README.zh-CN.md",
     "LICENSE",
     "SECURITY.md",
     "scripts/install.mjs",

@@ -109,7 +109,7 @@ async function main() {
     "graph-engineering-install bin must point to the explicit installer",
   );
 
-  for (const relative of ["README.md", "docs/usage.md", "docs/marketing-kit.md"]) {
+  for (const relative of ["README.md", "README.zh-CN.md", "docs/usage.md", "docs/marketing-kit.md"]) {
     const content = await readFile(path.join(projectRoot, relative), "utf8");
     addBlocker(placeholderPattern.test(content), relative + " still contains a repository placeholder");
   }
@@ -136,6 +136,7 @@ async function main() {
   const required = [
     "package.json",
     "README.md",
+    "README.zh-CN.md",
     "LICENSE",
     "SECURITY.md",
     "docs/release-runbook.md",

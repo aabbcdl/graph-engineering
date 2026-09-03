@@ -32,6 +32,61 @@ The Agent should show the exact paths and commands it used. Installation is an
 explicit local setup action; it does not grant permission to run Graph against a
 project or to apply any generated change.
 
+## One Prompt, One Run
+
+Once Graph Engineering is installed, one clear prompt takes an Agent from a
+repository path to an isolated, evidence-backed result. Name the repository,
+state one bounded goal, and choose the outcome you want. The Agent handles the
+preview, Graph run, specialist work, progress tracking, and final evidence.
+
+Use this prompt when you want an assessment only:
+
+~~~text
+Use Graph Engineering (`graph-engineering`) for this repository.
+
+Repository: /absolute/path/to/repository
+Mode: review (read-only)
+Goal: <one concrete question or bounded area to assess>
+Scope: <directories, files, or commit to inspect>
+Exclusions: do not modify code; do not apply, commit, push, publish, deploy,
+or perform other external mutations.
+
+I explicitly approve creating this Graph run. Before launch, confirm the
+workspace, isolation mode, selected backend/model, budget, and that several
+fresh Agent processes may run or queue. Run a read-only preview, then submit
+exactly one review run with progress tracking and follow it to a terminal state.
+Read the final report and machine evidence. Separate verified facts,
+hypotheses, deferred or unverified checks, blockers, and the next action. Do
+not call the result complete if a required gate is waiting or failed.
+~~~
+
+Use this prompt when you want a bounded repair prepared for your approval:
+
+~~~text
+Use Graph Engineering (`graph-engineering`) for this repository.
+
+Repository: /absolute/path/to/repository
+Mode: task
+Goal: <one concrete defect or change to implement>
+Scope: <directories or files that may be inspected and changed>
+Acceptance: <tests, behavior, or other evidence that must pass>
+Permissions: work only in Graph's isolated workspace. Do not write back to
+the source repository; do not apply, commit, push, publish, deploy, or perform
+other protected actions.
+
+I explicitly approve creating this Graph run. Before launch, confirm the
+workspace, isolation mode, selected backend/model, budget, and that several
+fresh Agent processes may run or queue. Run a preview, then submit exactly one
+task run with progress tracking and follow it to a terminal state. Read the
+report, completion evidence, and exact diff and test results. Stop after the
+isolated result is ready and wait for my separate decision before applying it.
+~~~
+
+Replace the bracketed fields with a real path and a specific outcome. This
+single prompt is the normal user interface; `apply`, `commit`, `push`,
+`publish`, and deployment remain separate decisions so the source repository
+cannot be changed accidentally.
+
 ## Why Use Graph
 
 A single Agent can often produce a patch. Graph is for the harder cases where
